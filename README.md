@@ -25,112 +25,300 @@ client := openai.NewClient("gw-xxx", openai.WithBaseURL("http://aigateway:8080/v
 
 ## Features
 
-- **Multi-provider** — OpenAI, Anthropic, AWS Bedrock, Ollama
-- **Automatic fallback** — If provider A fails, tries provider B
-- **Circuit breaker** — Isolates failing providers
-- **Rate limiting** — Per-tenant request quotas
-- **Cost tracking** — Per-request cost calculation
-- **Response caching** — Cache deterministic responses
-- **Streaming (SSE)** — Real-time chat responses
-- **OpenTelemetry** — Distributed tracing and metrics
+| Feature | Description |
+|---------|-------------|
+| **Multi-provider** | OpenAI, Anthropic, AWS Bedrock, Ollama |
+| **Automatic fallback** | If provider A fails, tries provider B |
+| **Circuit breaker** | Isolates failing providers |
+| **Rate limiting** | Per-tenant request quotas (Redis or in-memory) |
+| **Cost tracking** | Per-request cost calculation with budget alerts |
+| **Response caching** | Cache deterministic responses (Redis or in-memory) |
+| **Streaming (SSE)** | Real-time chat responses |
+| **OpenTelemetry** | Distributed tracing and Prometheus metrics |
+| **Admin API** | Full tenant management CRUD |
+| **AWS Integration** | Bedrock, Secrets Manager, SQS, SNS |
 
 ## Quick Start
 
 ### Prerequisites
 
 - Go 1.22+
-- Docker & Docker Compose
-- Ollama (for local testing)
+- Ollama (for free local testing)
+- Redis (optional, for distributed rate limiting/cache)
 
 ### Run locally
 
 ```bash
-# Start infrastructure
-docker compose up -d postgres redis
+# Clone the repository
+git clone https://github.com/felipepmaragno/ai-gateway.git
+cd ai-gateway
 
-# Run migrations
-make migrate-up
+# Start Ollama with a model
+ollama pull llama3.2
+ollama serve
 
-# Start Ollama (for free local testing)
-ollama run llama3:8b
-
-# Run the gateway
-make run
+# Run the gateway (uses in-memory storage by default)
+go run ./cmd/aigateway
 ```
 
-### Test with curl
+The gateway starts at `http://localhost:8080`.
+
+---
+
+## Testing the Features
+
+### 1. Health Check
 
 ```bash
-# Create a tenant
-curl -X POST http://localhost:8080/admin/tenants \
-  -H "Content-Type: application/json" \
-  -d '{"name": "test-service", "rate_limit_rpm": 100}'
+curl -s http://localhost:8080/health | jq
+```
 
-# Make a request (using Ollama)
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer gw-sk-xxx" \
+Response:
+```json
+{
+  "status": "healthy",
+  "version": "0.4.0",
+  "providers": { "ollama": "ok" },
+  "circuit_breakers": {}
+}
+```
+
+### 2. List Available Models
+
+```bash
+curl -s http://localhost:8080/v1/models \
+  -H "Authorization: Bearer gw-default-key" | jq
+```
+
+### 3. Chat Completion (Sync)
+
+```bash
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer gw-default-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama3:8b",
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "model": "llama3.2",
+    "messages": [{"role": "user", "content": "What is 2+2?"}]
+  }' | jq
+```
+
+Response includes gateway metadata:
+```json
+{
+  "id": "chatcmpl-...",
+  "model": "llama3.2",
+  "choices": [{"message": {"role": "assistant", "content": "4"}}],
+  "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+  "x_gateway": {
+    "provider": "ollama",
+    "latency_ms": 234,
+    "cost_usd": 0.00015,
+    "cache_hit": false,
+    "request_id": "req-abc123",
+    "trace_id": "trace-xyz"
+  }
+}
+```
+
+### 4. Chat Completion (Streaming)
+
+```bash
+curl -N http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer gw-default-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama3.2",
+    "messages": [{"role": "user", "content": "Tell me a joke"}],
+    "stream": true
   }'
 ```
 
-## Architecture
+### 5. Response Caching
 
-```mermaid
-flowchart LR
-    subgraph Clients
-        S1[Service A]
-        S2[Service B]
-    end
+Make the same request twice — the second will be a cache hit:
 
-    subgraph Gateway
-        API[HTTP API]
-        RL[Rate Limiter]
-        CB[Circuit Breaker]
-        CACHE[Cache]
-    end
+```bash
+# First request (cache miss)
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer gw-default-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama3.2", "messages": [{"role": "user", "content": "Hi"}], "temperature": 0}' | jq '.x_gateway.cache_hit'
+# Output: false
 
-    subgraph Providers
-        OAI[OpenAI]
-        ANT[Anthropic]
-        OLL[Ollama]
-    end
-
-    S1 & S2 --> API
-    API --> RL --> CB --> CACHE
-    CACHE --> OAI & ANT & OLL
+# Second request (cache hit)
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer gw-default-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama3.2", "messages": [{"role": "user", "content": "Hi"}], "temperature": 0}' | jq '.x_gateway.cache_hit'
+# Output: true
 ```
 
-## Documentation
+### 6. Usage & Cost Tracking
 
-- [Technical Specification](docs/spec.md)
-- [Architecture Decision Records](docs/adr/)
+```bash
+curl -s http://localhost:8080/v1/usage \
+  -H "Authorization: Bearer gw-default-key" | jq
+```
+
+Response:
+```json
+{
+  "tenant_id": "default",
+  "period_start": "2026-02-01T00:00:00Z",
+  "total_cost_usd": 0.0023,
+  "budget_usd": 1000,
+  "budget_used_pct": 0.00023,
+  "request_count": 15
+}
+```
+
+---
+
+## Admin API
+
+Full tenant management without authentication (for internal use).
+
+### List Tenants
+
+```bash
+curl -s http://localhost:8080/admin/tenants | jq
+```
+
+### Create Tenant
+
+```bash
+curl -s -X POST http://localhost:8080/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-service",
+    "rate_limit_rpm": 100,
+    "budget_usd": 50.0
+  }' | jq
+```
+
+Response:
+```json
+{
+  "id": "abc123",
+  "name": "my-service",
+  "api_key": "gw-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "rate_limit_rpm": 100,
+  "budget_usd": 50
+}
+```
+
+### Get Tenant
+
+```bash
+curl -s http://localhost:8080/admin/tenants/{id} | jq
+```
+
+### Update Tenant
+
+```bash
+curl -s -X PUT http://localhost:8080/admin/tenants/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"rate_limit_rpm": 200, "budget_usd": 100}' | jq
+```
+
+### Delete Tenant
+
+```bash
+curl -s -X DELETE http://localhost:8080/admin/tenants/{id}
+```
+
+### Rotate API Key
+
+```bash
+curl -s -X POST http://localhost:8080/admin/tenants/{id}/rotate-key | jq
+```
+
+---
+
+## Prometheus Metrics
+
+Available at `http://localhost:8080/metrics`:
+
+| Metric | Description |
+|--------|-------------|
+| `aigateway_requests_total` | Total requests by tenant, provider, model, status |
+| `aigateway_request_duration_seconds` | Request latency histogram |
+| `aigateway_tokens_total` | Token usage by type (input/output) |
+| `aigateway_cost_usd_total` | Cost in USD by tenant/provider/model |
+| `aigateway_active_streams` | Current active streaming connections |
+| `aigateway_circuit_breaker_state` | Circuit breaker state (0=closed, 1=open) |
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADDR` | `:8080` | Server listen address |
+| `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `REDIS_URL` | - | Redis URL for distributed cache/rate limiting |
+| `OPENAI_API_KEY` | - | OpenAI API key |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI base URL |
+| `ANTHROPIC_API_KEY` | - | Anthropic API key |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `AWS_REGION` | - | AWS region for Bedrock |
+| `DEFAULT_PROVIDER` | `ollama` | Default provider when not specified |
+| `OTLP_ENDPOINT` | - | OpenTelemetry collector endpoint |
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         AI Gateway                               │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │   Auth   │─▶│  Rate    │─▶│  Cache   │─▶│     Router       │ │
+│  │ (Tenant) │  │ Limiter  │  │          │  │ (Fallback + CB)  │ │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘ │
+│                                                    │             │
+│       ┌────────────────────────────────────────────┼───────┐     │
+│       ▼                ▼                ▼          ▼       │     │
+│  ┌─────────┐    ┌───────────┐    ┌──────────┐  ┌────────┐ │     │
+│  │ OpenAI  │    │ Anthropic │    │  Ollama  │  │Bedrock │ │     │
+│  └─────────┘    └───────────┘    └──────────┘  └────────┘ │     │
+│       └────────────────────────────────────────────────────┘     │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │   Cost   │  │  Budget  │  │ Metrics  │  │   Telemetry      │ │
+│  │ Tracker  │  │ Monitor  │  │(Prometh.)│  │  (OpenTelemetry) │ │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Development
 
 ```bash
 # Run tests
-make test
+go test ./...
 
 # Run tests with race detector
-make test-race
+go test -race ./...
 
-# Run linter
-make lint
+# Build
+go build -o bin/aigateway ./cmd/aigateway
 
-# Run with hot reload
-make dev
+# Run with environment variables
+OPENAI_API_KEY=sk-xxx ANTHROPIC_API_KEY=sk-ant-xxx go run ./cmd/aigateway
 ```
+
+---
 
 ## Roadmap
 
-- [x] Project setup
-- [ ] v0.1.0 — Basic proxy + OpenAI + Ollama + rate limiting
-- [ ] v0.2.0 — Anthropic + fallback + circuit breaker
-- [ ] v0.3.0 — Cost tracking + streaming + OpenTelemetry
-- [ ] v0.4.0 — AWS Bedrock + SQS/SNS integration
+- [x] v0.1.0 — Basic proxy + OpenAI + Ollama + rate limiting
+- [x] v0.2.0 — Anthropic + fallback + circuit breaker + cache
+- [x] v0.3.0 — Cost tracking + streaming + OpenTelemetry + Prometheus
+- [x] v0.4.0 — AWS Bedrock + Secrets Manager + SQS/SNS + Admin API
+- [ ] v0.5.0 — PostgreSQL persistence + API key encryption + RBAC
 
 ## License
 
