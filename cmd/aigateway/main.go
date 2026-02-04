@@ -10,14 +10,17 @@ import (
 	"time"
 
 	"github.com/felipepmaragno/ai-gateway/internal/api"
+	"github.com/felipepmaragno/ai-gateway/internal/budget"
 	"github.com/felipepmaragno/ai-gateway/internal/cache"
 	"github.com/felipepmaragno/ai-gateway/internal/config"
+	"github.com/felipepmaragno/ai-gateway/internal/cost"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/anthropic"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/ollama"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/openai"
 	"github.com/felipepmaragno/ai-gateway/internal/ratelimit"
 	"github.com/felipepmaragno/ai-gateway/internal/repository"
 	"github.com/felipepmaragno/ai-gateway/internal/router"
+	"github.com/felipepmaragno/ai-gateway/internal/telemetry"
 )
 
 func main() {
@@ -29,10 +32,20 @@ func main() {
 
 	setupLogger(cfg.LogLevel)
 
-	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.2.0")
+	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.3.0")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	shutdownTelemetry, err := telemetry.Init(ctx, "ai-gateway", cfg.OTLPEndpoint)
+	if err != nil {
+		slog.Warn("failed to initialize telemetry", "error", err)
+	}
+	defer func() {
+		if shutdownTelemetry != nil {
+			shutdownTelemetry(ctx)
+		}
+	}()
 
 	tenantRepo := repository.NewInMemoryTenantRepository()
 
@@ -87,12 +100,18 @@ func main() {
 		slog.Info("using in-memory cache")
 	}
 
+	costTracker := cost.NewInMemoryTracker()
+	budgetMonitor := budget.NewMonitor(costTracker, budget.DefaultThresholds())
+	budgetMonitor.OnAlert(budget.LogAlertHandler)
+
 	handler := api.NewHandler(api.HandlerConfig{
-		TenantRepo:  tenantRepo,
-		RateLimiter: rateLimiter,
-		Router:      providerRouter,
-		Cache:       responseCache,
-		CacheTTL:    5 * time.Minute,
+		TenantRepo:    tenantRepo,
+		RateLimiter:   rateLimiter,
+		Router:        providerRouter,
+		Cache:         responseCache,
+		CacheTTL:      5 * time.Minute,
+		CostTracker:   costTracker,
+		BudgetMonitor: budgetMonitor,
 	})
 
 	srv := &http.Server{

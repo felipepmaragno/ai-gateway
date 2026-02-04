@@ -9,30 +9,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felipepmaragno/ai-gateway/internal/budget"
 	"github.com/felipepmaragno/ai-gateway/internal/cache"
+	"github.com/felipepmaragno/ai-gateway/internal/cost"
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
+	"github.com/felipepmaragno/ai-gateway/internal/metrics"
 	"github.com/felipepmaragno/ai-gateway/internal/ratelimit"
 	"github.com/felipepmaragno/ai-gateway/internal/repository"
 	"github.com/felipepmaragno/ai-gateway/internal/router"
+	"github.com/felipepmaragno/ai-gateway/internal/telemetry"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type HandlerConfig struct {
-	TenantRepo  repository.TenantRepository
-	RateLimiter ratelimit.RateLimiter
-	Router      *router.Router
-	Cache       cache.Cache
-	CacheTTL    time.Duration
+	TenantRepo     repository.TenantRepository
+	RateLimiter    ratelimit.RateLimiter
+	Router         *router.Router
+	Cache          cache.Cache
+	CacheTTL       time.Duration
+	CostCalculator *cost.Calculator
+	CostTracker    cost.Tracker
+	BudgetMonitor  *budget.Monitor
 }
 
 type Handler struct {
-	tenantRepo  repository.TenantRepository
-	rateLimiter ratelimit.RateLimiter
-	router      *router.Router
-	cache       cache.Cache
-	cacheTTL    time.Duration
-	mux         *http.ServeMux
+	tenantRepo     repository.TenantRepository
+	rateLimiter    ratelimit.RateLimiter
+	router         *router.Router
+	cache          cache.Cache
+	cacheTTL       time.Duration
+	costCalculator *cost.Calculator
+	costTracker    cost.Tracker
+	budgetMonitor  *budget.Monitor
+	mux            *http.ServeMux
 }
 
 func NewHandler(cfg HandlerConfig) *Handler {
@@ -41,17 +51,26 @@ func NewHandler(cfg HandlerConfig) *Handler {
 		cacheTTL = 5 * time.Minute
 	}
 
+	costCalc := cfg.CostCalculator
+	if costCalc == nil {
+		costCalc = cost.NewCalculator()
+	}
+
 	h := &Handler{
-		tenantRepo:  cfg.TenantRepo,
-		rateLimiter: cfg.RateLimiter,
-		router:      cfg.Router,
-		cache:       cfg.Cache,
-		cacheTTL:    cacheTTL,
-		mux:         http.NewServeMux(),
+		tenantRepo:     cfg.TenantRepo,
+		rateLimiter:    cfg.RateLimiter,
+		router:         cfg.Router,
+		cache:          cfg.Cache,
+		cacheTTL:       cacheTTL,
+		costCalculator: costCalc,
+		costTracker:    cfg.CostTracker,
+		budgetMonitor:  cfg.BudgetMonitor,
+		mux:            http.NewServeMux(),
 	}
 
 	h.mux.HandleFunc("POST /v1/chat/completions", h.handleChatCompletions)
 	h.mux.HandleFunc("GET /v1/models", h.handleListModels)
+	h.mux.HandleFunc("GET /v1/usage", h.handleUsage)
 	h.mux.HandleFunc("GET /health", h.handleHealth)
 	h.mux.HandleFunc("GET /health/live", h.handleHealthLive)
 	h.mux.HandleFunc("GET /health/ready", h.handleHealthReady)
@@ -68,13 +87,19 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	start := time.Now()
 
+	ctx, span := telemetry.StartSpan(ctx, "chat.completions")
+	defer span.End()
+
 	requestID := r.Header.Get("X-Request-ID")
 	if requestID == "" {
 		requestID = uuid.New().String()
 	}
 
+	traceID := telemetry.GetTraceID(ctx)
+
 	apiKey := extractAPIKey(r)
 	if apiKey == "" {
+		metrics.RequestsTotal.WithLabelValues("", "", "", "unauthorized").Inc()
 		writeError(w, http.StatusUnauthorized, "missing API key")
 		return
 	}
@@ -82,8 +107,21 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	tenant, err := h.tenantRepo.GetByAPIKey(ctx, apiKey)
 	if err != nil {
 		slog.Warn("invalid API key", "error", err, "request_id", requestID)
+		metrics.RequestsTotal.WithLabelValues("", "", "", "unauthorized").Inc()
 		writeError(w, http.StatusUnauthorized, "invalid API key")
 		return
+	}
+
+	if h.budgetMonitor != nil {
+		exceeded, err := h.budgetMonitor.IsBudgetExceeded(ctx, tenant)
+		if err != nil {
+			slog.Error("budget check error", "error", err, "request_id", requestID)
+		} else if exceeded {
+			slog.Warn("budget exceeded", "tenant_id", tenant.ID, "request_id", requestID)
+			metrics.RequestsTotal.WithLabelValues(tenant.ID, "", "", "budget_exceeded").Inc()
+			writeError(w, http.StatusPaymentRequired, "budget exceeded")
+			return
+		}
 	}
 
 	allowed, remaining, resetAt, err := h.rateLimiter.Allow(ctx, tenant.ID, tenant.RateLimitRPM)
@@ -99,12 +137,15 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	if !allowed {
 		slog.Warn("rate limit exceeded", "tenant_id", tenant.ID, "request_id", requestID)
+		metrics.RecordRateLimitHit(tenant.ID)
+		metrics.RequestsTotal.WithLabelValues(tenant.ID, "", "", "rate_limited").Inc()
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
 
 	var req domain.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		metrics.RequestsTotal.WithLabelValues(tenant.ID, "", "", "bad_request").Inc()
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -116,10 +157,11 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		provider, err := h.router.SelectProvider(ctx, providerHint, req.Model)
 		if err != nil {
 			slog.Error("provider selection failed", "error", err, "request_id", requestID)
+			metrics.RequestsTotal.WithLabelValues(tenant.ID, "", req.Model, "no_provider").Inc()
 			writeError(w, http.StatusBadGateway, "no provider available")
 			return
 		}
-		h.handleStreamingResponse(w, r, provider, req, tenant, requestID, start)
+		h.handleStreamingResponse(w, r, provider, req, tenant, requestID, traceID, start)
 		return
 	}
 
@@ -134,7 +176,11 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 				CostUSD:   0,
 				CacheHit:  true,
 				RequestID: requestID,
+				TraceID:   traceID,
 			}
+			metrics.RecordCacheHit(tenant.ID)
+			metrics.RecordRequest(tenant.ID, "cache", req.Model, "success", float64(latency)/1000)
+			telemetry.AddCacheAttribute(span, true)
 			slog.Info("cache hit",
 				"request_id", requestID,
 				"tenant_id", tenant.ID,
@@ -147,11 +193,15 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 			json.NewEncoder(w).Encode(cached)
 			return
 		}
+		metrics.RecordCacheMiss(tenant.ID)
 	}
+
+	telemetry.AddCacheAttribute(span, false)
 
 	providers, err := h.router.SelectProviderWithFallback(ctx, providerHint, req.Model)
 	if err != nil {
 		slog.Error("provider selection failed", "error", err, "request_id", requestID)
+		metrics.RequestsTotal.WithLabelValues(tenant.ID, "", req.Model, "no_provider").Inc()
 		writeError(w, http.StatusBadGateway, "no provider available")
 		return
 	}
@@ -173,10 +223,13 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 			"request_id", requestID,
 		)
 		h.router.RecordFailure(provider.ID())
+		metrics.RecordProviderError(provider.ID(), "request_failed")
 	}
 
 	if resp == nil {
 		slog.Error("all providers failed", "error", lastErr, "request_id", requestID)
+		metrics.RequestsTotal.WithLabelValues(tenant.ID, "", req.Model, "provider_error").Inc()
+		telemetry.AddErrorAttribute(span, lastErr)
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("all providers failed: %v", lastErr))
 		return
 	}
@@ -187,21 +240,56 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	costUSD := h.costCalculator.Calculate(req.Model, resp.Usage)
+
+	if h.costTracker != nil {
+		record := cost.UsageRecord{
+			TenantID:     tenant.ID,
+			RequestID:    requestID,
+			Model:        req.Model,
+			Provider:     usedProvider.ID(),
+			InputTokens:  resp.Usage.PromptTokens,
+			OutputTokens: resp.Usage.CompletionTokens,
+			CostUSD:      costUSD,
+			Timestamp:    time.Now(),
+		}
+		if err := h.costTracker.Record(ctx, record); err != nil {
+			slog.Warn("failed to record usage", "error", err, "request_id", requestID)
+		}
+
+		if h.budgetMonitor != nil {
+			h.budgetMonitor.Check(ctx, tenant)
+		}
+	}
+
 	latency := time.Since(start).Milliseconds()
 	resp.Gateway = &domain.Gateway{
 		Provider:  usedProvider.ID(),
 		LatencyMs: latency,
-		CostUSD:   0,
+		CostUSD:   costUSD,
 		CacheHit:  false,
 		RequestID: requestID,
+		TraceID:   traceID,
 	}
+
+	metrics.RecordRequest(tenant.ID, usedProvider.ID(), req.Model, "success", float64(latency)/1000)
+	metrics.RecordTokens(tenant.ID, usedProvider.ID(), req.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	metrics.RecordCost(tenant.ID, usedProvider.ID(), req.Model, costUSD)
+
+	telemetry.AddRequestAttributes(span, tenant.ID, usedProvider.ID(), req.Model, requestID)
+	telemetry.AddTokenAttributes(span, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	telemetry.AddCostAttribute(span, costUSD)
 
 	slog.Info("request completed",
 		"request_id", requestID,
+		"trace_id", traceID,
 		"tenant_id", tenant.ID,
 		"provider", usedProvider.ID(),
 		"model", req.Model,
 		"latency_ms", latency,
+		"cost_usd", costUSD,
+		"tokens_input", resp.Usage.PromptTokens,
+		"tokens_output", resp.Usage.CompletionTokens,
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -210,8 +298,14 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request, provider router.Provider, req domain.ChatRequest, tenant *domain.Tenant, requestID string, start time.Time) {
+func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request, provider router.Provider, req domain.ChatRequest, tenant *domain.Tenant, requestID string, traceID string, start time.Time) {
 	ctx := r.Context()
+
+	ctx, span := telemetry.StartSpan(ctx, "chat.completions.stream")
+	defer span.End()
+
+	metrics.ActiveStreams.Inc()
+	defer metrics.ActiveStreams.Dec()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -237,19 +331,25 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 					CostUSD:   0,
 					CacheHit:  false,
 					RequestID: requestID,
+					TraceID:   traceID,
 				}
 				gatewayJSON, _ := json.Marshal(map[string]interface{}{"x_gateway": gatewayData})
 				w.Write([]byte("data: " + string(gatewayJSON) + "\n\n"))
 				w.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 
+				metrics.RecordRequest(tenant.ID, provider.ID(), req.Model, "success", float64(latency)/1000)
+				telemetry.AddRequestAttributes(span, tenant.ID, provider.ID(), req.Model, requestID)
+
 				slog.Info("streaming request completed",
 					"request_id", requestID,
+					"trace_id", traceID,
 					"tenant_id", tenant.ID,
 					"provider", provider.ID(),
 					"model", req.Model,
 					"latency_ms", latency,
 				)
+				h.router.RecordSuccess(provider.ID())
 				return
 			}
 
@@ -260,6 +360,9 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		case err, ok := <-errs:
 			if ok && err != nil {
 				slog.Error("streaming error", "error", err, "request_id", requestID)
+				metrics.RecordProviderError(provider.ID(), "stream_error")
+				h.router.RecordFailure(provider.ID())
+				telemetry.AddErrorAttribute(span, err)
 				return
 			}
 
@@ -298,6 +401,53 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *Handler) handleUsage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	apiKey := extractAPIKey(r)
+	if apiKey == "" {
+		writeError(w, http.StatusUnauthorized, "missing API key")
+		return
+	}
+
+	tenant, err := h.tenantRepo.GetByAPIKey(ctx, apiKey)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid API key")
+		return
+	}
+
+	if h.costTracker == nil {
+		writeError(w, http.StatusNotImplemented, "usage tracking not enabled")
+		return
+	}
+
+	startOfMonth := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -time.Now().Day()+1)
+	records, err := h.costTracker.GetTenantUsage(ctx, tenant.ID, startOfMonth)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get usage")
+		return
+	}
+
+	totalCost, _ := h.costTracker.GetTenantTotalCost(ctx, tenant.ID, startOfMonth)
+
+	resp := map[string]interface{}{
+		"tenant_id":       tenant.ID,
+		"period_start":    startOfMonth.Format(time.RFC3339),
+		"period_end":      time.Now().Format(time.RFC3339),
+		"total_cost_usd":  totalCost,
+		"budget_usd":      tenant.BudgetUSD,
+		"budget_used_pct": 0.0,
+		"request_count":   len(records),
+	}
+
+	if tenant.BudgetUSD > 0 {
+		resp["budget_used_pct"] = (totalCost / tenant.BudgetUSD) * 100
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -326,7 +476,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"status":           status,
-		"version":          "0.2.0",
+		"version":          "0.3.0",
 		"providers":        providers,
 		"circuit_breakers": h.router.CircuitBreakerStates(),
 	}
