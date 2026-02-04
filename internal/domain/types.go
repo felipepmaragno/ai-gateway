@@ -3,16 +3,18 @@ package domain
 import "time"
 
 type Tenant struct {
-	ID                string
-	Name              string
-	APIKeyHash        string
-	BudgetUSD         float64
-	RateLimitRPM      int
-	AllowedModels     []string
-	DefaultProvider   string
-	FallbackProviders []string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	APIKey            string    `json:"api_key,omitempty"`
+	APIKeyHash        string    `json:"-"`
+	BudgetUSD         float64   `json:"budget_usd"`
+	RateLimitRPM      int       `json:"rate_limit_rpm"`
+	AllowedModels     []string  `json:"allowed_models,omitempty"`
+	DefaultProvider   string    `json:"default_provider,omitempty"`
+	FallbackProviders []string  `json:"fallback_providers,omitempty"`
+	Enabled           bool      `json:"enabled"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type ChatRequest struct {

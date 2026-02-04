@@ -13,8 +13,10 @@ import (
 type TenantRepository interface {
 	GetByAPIKey(ctx context.Context, apiKey string) (*domain.Tenant, error)
 	GetByID(ctx context.Context, id string) (*domain.Tenant, error)
+	List(ctx context.Context) ([]*domain.Tenant, error)
 	Create(ctx context.Context, tenant *domain.Tenant) error
 	Update(ctx context.Context, tenant *domain.Tenant) error
+	Delete(ctx context.Context, id string) error
 }
 
 type InMemoryTenantRepository struct {
@@ -91,12 +93,50 @@ func (r *InMemoryTenantRepository) Update(ctx context.Context, tenant *domain.Te
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.tenants[tenant.ID]; !ok {
+	oldTenant, ok := r.tenants[tenant.ID]
+	if !ok {
 		return domain.ErrTenantNotFound
+	}
+
+	if oldTenant.APIKeyHash != "" {
+		delete(r.byKey, oldTenant.APIKeyHash)
+	}
+
+	if tenant.APIKey != "" {
+		tenant.APIKeyHash = hashAPIKey(tenant.APIKey)
+		r.byKey[tenant.APIKeyHash] = tenant.ID
 	}
 
 	tenant.UpdatedAt = time.Now()
 	r.tenants[tenant.ID] = tenant
+
+	return nil
+}
+
+func (r *InMemoryTenantRepository) List(ctx context.Context) ([]*domain.Tenant, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	tenants := make([]*domain.Tenant, 0, len(r.tenants))
+	for _, t := range r.tenants {
+		tenants = append(tenants, t)
+	}
+	return tenants, nil
+}
+
+func (r *InMemoryTenantRepository) Delete(ctx context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	tenant, ok := r.tenants[id]
+	if !ok {
+		return domain.ErrTenantNotFound
+	}
+
+	if tenant.APIKeyHash != "" {
+		delete(r.byKey, tenant.APIKeyHash)
+	}
+	delete(r.tenants, id)
 
 	return nil
 }

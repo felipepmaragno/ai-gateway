@@ -15,6 +15,7 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/config"
 	"github.com/felipepmaragno/ai-gateway/internal/cost"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/anthropic"
+	"github.com/felipepmaragno/ai-gateway/internal/provider/bedrock"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/ollama"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/openai"
 	"github.com/felipepmaragno/ai-gateway/internal/ratelimit"
@@ -32,7 +33,7 @@ func main() {
 
 	setupLogger(cfg.LogLevel)
 
-	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.3.0")
+	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.4.0")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -79,6 +80,16 @@ func main() {
 		slog.Info("registered provider", "provider", "anthropic")
 	}
 
+	if cfg.AWSRegion != "" {
+		bedrockProvider, err := bedrock.New(ctx, cfg.AWSRegion)
+		if err != nil {
+			slog.Warn("failed to initialize bedrock provider", "error", err)
+		} else {
+			providers["bedrock"] = bedrockProvider
+			slog.Info("registered provider", "provider", "bedrock", "region", cfg.AWSRegion)
+		}
+	}
+
 	if len(providers) == 0 {
 		slog.Error("no providers configured")
 		os.Exit(1)
@@ -114,9 +125,15 @@ func main() {
 		BudgetMonitor: budgetMonitor,
 	})
 
+	adminHandler := api.NewAdminHandler(tenantRepo)
+
+	mux := http.NewServeMux()
+	mux.Handle("/", handler)
+	mux.Handle("/admin/", adminHandler)
+
 	srv := &http.Server{
 		Addr:         cfg.Addr,
-		Handler:      handler,
+		Handler:      mux,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,

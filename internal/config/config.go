@@ -15,6 +15,7 @@ type Config struct {
 	OllamaBaseURL   string
 	DefaultProvider string
 	OTLPEndpoint    string
+	AWSRegion       string
 }
 
 func Load() (*Config, error) {
@@ -29,6 +30,7 @@ func Load() (*Config, error) {
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		DefaultProvider: getEnv("DEFAULT_PROVIDER", "ollama"),
 		OTLPEndpoint:    getEnv("OTLP_ENDPOINT", ""),
+		AWSRegion:       getEnv("AWS_REGION", ""),
 	}
 
 	return cfg, nil
