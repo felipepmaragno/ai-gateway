@@ -53,14 +53,16 @@ func (c *Calculator) SetPricing(model string, pricing ModelPricing) {
 }
 
 type UsageRecord struct {
-	TenantID    string
-	RequestID   string
-	Model       string
-	Provider    string
-	InputTokens int
+	TenantID     string
+	RequestID    string
+	Model        string
+	Provider     string
+	InputTokens  int
 	OutputTokens int
-	CostUSD     float64
-	Timestamp   time.Time
+	CostUSD      float64
+	Cached       bool
+	LatencyMs    int64
+	Timestamp    time.Time
 }
 
 type Tracker interface {

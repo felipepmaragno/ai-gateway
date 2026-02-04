@@ -476,7 +476,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"status":           status,
-		"version":          "0.4.0",
+		"version":          "0.5.0",
 		"providers":        providers,
 		"circuit_breakers": h.router.CircuitBreakerStates(),
 	}

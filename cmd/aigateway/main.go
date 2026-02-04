@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/felipepmaragno/ai-gateway/internal/api"
+	"github.com/felipepmaragno/ai-gateway/internal/auth"
 	"github.com/felipepmaragno/ai-gateway/internal/budget"
 	"github.com/felipepmaragno/ai-gateway/internal/cache"
 	"github.com/felipepmaragno/ai-gateway/internal/config"
@@ -22,6 +24,7 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/repository"
 	"github.com/felipepmaragno/ai-gateway/internal/router"
 	"github.com/felipepmaragno/ai-gateway/internal/telemetry"
+	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -33,7 +36,7 @@ func main() {
 
 	setupLogger(cfg.LogLevel)
 
-	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.4.0")
+	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.5.0")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -48,7 +51,32 @@ func main() {
 		}
 	}()
 
-	tenantRepo := repository.NewInMemoryTenantRepository()
+	var tenantRepo repository.TenantRepository
+	var costTracker cost.Tracker
+	var db *sql.DB
+
+	if cfg.DatabaseURL != "" {
+		var err error
+		db, err = sql.Open("postgres", cfg.DatabaseURL)
+		if err != nil {
+			slog.Error("failed to connect to database", "error", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		if err := db.PingContext(ctx); err != nil {
+			slog.Error("failed to ping database", "error", err)
+			os.Exit(1)
+		}
+
+		tenantRepo = repository.NewPostgresTenantRepository(db)
+		costTracker = repository.NewPostgresUsageRepository(db)
+		slog.Info("using postgresql storage")
+	} else {
+		tenantRepo = repository.NewInMemoryTenantRepository()
+		costTracker = cost.NewInMemoryTracker()
+		slog.Info("using in-memory storage")
+	}
 
 	var rateLimiter ratelimit.RateLimiter
 	if cfg.RedisURL != "" {
@@ -111,7 +139,6 @@ func main() {
 		slog.Info("using in-memory cache")
 	}
 
-	costTracker := cost.NewInMemoryTracker()
 	budgetMonitor := budget.NewMonitor(costTracker, budget.DefaultThresholds())
 	budgetMonitor.OnAlert(budget.LogAlertHandler)
 
@@ -129,7 +156,22 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
-	mux.Handle("/admin/", adminHandler)
+
+	if cfg.AdminAuthEnabled {
+		var adminUserRepo auth.AdminUserRepository
+		if db != nil {
+			adminUserRepo = auth.NewPostgresAdminUserRepository(db)
+		} else {
+			adminUserRepo = auth.NewInMemoryAdminUserRepository()
+		}
+		authenticator := auth.NewAuthenticator(adminUserRepo)
+		rbacMiddleware := auth.NewRBACMiddleware(authenticator)
+		mux.Handle("/admin/", rbacMiddleware.RequireAuth(adminHandler))
+		slog.Info("admin API authentication enabled")
+	} else {
+		mux.Handle("/admin/", adminHandler)
+		slog.Info("admin API authentication disabled")
+	}
 
 	srv := &http.Server{
 		Addr:         cfg.Addr,
