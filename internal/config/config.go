@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL     string
 	OpenAIAPIKey    string
 	OpenAIBaseURL   string
+	AnthropicAPIKey string
 	OllamaBaseURL   string
 	DefaultProvider string
 }
@@ -23,6 +24,7 @@ func Load() (*Config, error) {
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
 		OpenAIAPIKey:    getEnv("OPENAI_API_KEY", ""),
 		OpenAIBaseURL:   getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		DefaultProvider: getEnv("DEFAULT_PROVIDER", "ollama"),
 	}

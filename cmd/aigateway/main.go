@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/felipepmaragno/ai-gateway/internal/api"
+	"github.com/felipepmaragno/ai-gateway/internal/cache"
 	"github.com/felipepmaragno/ai-gateway/internal/config"
+	"github.com/felipepmaragno/ai-gateway/internal/provider/anthropic"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/ollama"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/openai"
 	"github.com/felipepmaragno/ai-gateway/internal/ratelimit"
@@ -27,7 +29,7 @@ func main() {
 
 	setupLogger(cfg.LogLevel)
 
-	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.1.0")
+	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.2.0")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -59,6 +61,11 @@ func main() {
 		slog.Info("registered provider", "provider", "ollama", "url", cfg.OllamaBaseURL)
 	}
 
+	if cfg.AnthropicAPIKey != "" {
+		providers["anthropic"] = anthropic.New(cfg.AnthropicAPIKey)
+		slog.Info("registered provider", "provider", "anthropic")
+	}
+
 	if len(providers) == 0 {
 		slog.Error("no providers configured")
 		os.Exit(1)
@@ -66,10 +73,26 @@ func main() {
 
 	providerRouter := router.New(providers, cfg.DefaultProvider)
 
+	var responseCache cache.Cache
+	if cfg.RedisURL != "" {
+		responseCache, err = cache.NewRedisCache(cfg.RedisURL)
+		if err != nil {
+			slog.Warn("failed to connect to redis for cache, using in-memory", "error", err)
+			responseCache = cache.NewInMemoryCache()
+		} else {
+			slog.Info("using redis cache")
+		}
+	} else {
+		responseCache = cache.NewInMemoryCache()
+		slog.Info("using in-memory cache")
+	}
+
 	handler := api.NewHandler(api.HandlerConfig{
 		TenantRepo:  tenantRepo,
 		RateLimiter: rateLimiter,
 		Router:      providerRouter,
+		Cache:       responseCache,
+		CacheTTL:    5 * time.Minute,
 	})
 
 	srv := &http.Server{

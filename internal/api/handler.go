@@ -2,11 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/felipepmaragno/ai-gateway/internal/cache"
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 	"github.com/felipepmaragno/ai-gateway/internal/ratelimit"
 	"github.com/felipepmaragno/ai-gateway/internal/repository"
@@ -19,20 +22,31 @@ type HandlerConfig struct {
 	TenantRepo  repository.TenantRepository
 	RateLimiter ratelimit.RateLimiter
 	Router      *router.Router
+	Cache       cache.Cache
+	CacheTTL    time.Duration
 }
 
 type Handler struct {
 	tenantRepo  repository.TenantRepository
 	rateLimiter ratelimit.RateLimiter
 	router      *router.Router
+	cache       cache.Cache
+	cacheTTL    time.Duration
 	mux         *http.ServeMux
 }
 
 func NewHandler(cfg HandlerConfig) *Handler {
+	cacheTTL := cfg.CacheTTL
+	if cacheTTL == 0 {
+		cacheTTL = 5 * time.Minute
+	}
+
 	h := &Handler{
 		tenantRepo:  cfg.TenantRepo,
 		rateLimiter: cfg.RateLimiter,
 		router:      cfg.Router,
+		cache:       cfg.Cache,
+		cacheTTL:    cacheTTL,
 		mux:         http.NewServeMux(),
 	}
 
@@ -79,8 +93,8 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("X-RateLimit-Limit", string(rune(tenant.RateLimitRPM)))
-	w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(tenant.RateLimitRPM))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	w.Header().Set("X-RateLimit-Reset", resetAt.Format(time.RFC3339))
 
 	if !allowed {
@@ -96,28 +110,86 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	providerHint := r.Header.Get("X-Provider")
-	provider, err := h.router.SelectProvider(ctx, providerHint, req.Model)
+	skipCache := r.Header.Get("X-Skip-Cache") == "true"
+
+	if req.Stream {
+		provider, err := h.router.SelectProvider(ctx, providerHint, req.Model)
+		if err != nil {
+			slog.Error("provider selection failed", "error", err, "request_id", requestID)
+			writeError(w, http.StatusBadGateway, "no provider available")
+			return
+		}
+		h.handleStreamingResponse(w, r, provider, req, tenant, requestID, start)
+		return
+	}
+
+	var cacheKey string
+	if h.cache != nil && !skipCache {
+		cacheKey = cache.GenerateCacheKey(req)
+		if cached, ok := h.cache.Get(ctx, cacheKey); ok {
+			latency := time.Since(start).Milliseconds()
+			cached.Gateway = &domain.Gateway{
+				Provider:  "cache",
+				LatencyMs: latency,
+				CostUSD:   0,
+				CacheHit:  true,
+				RequestID: requestID,
+			}
+			slog.Info("cache hit",
+				"request_id", requestID,
+				"tenant_id", tenant.ID,
+				"model", req.Model,
+				"latency_ms", latency,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Request-ID", requestID)
+			w.Header().Set("X-Cache", "HIT")
+			json.NewEncoder(w).Encode(cached)
+			return
+		}
+	}
+
+	providers, err := h.router.SelectProviderWithFallback(ctx, providerHint, req.Model)
 	if err != nil {
 		slog.Error("provider selection failed", "error", err, "request_id", requestID)
 		writeError(w, http.StatusBadGateway, "no provider available")
 		return
 	}
 
-	if req.Stream {
-		h.handleStreamingResponse(w, r, provider, req, tenant, requestID, start)
+	var resp *domain.ChatResponse
+	var lastErr error
+	var usedProvider router.Provider
+
+	for _, provider := range providers {
+		resp, lastErr = provider.ChatCompletion(ctx, req)
+		if lastErr == nil {
+			h.router.RecordSuccess(provider.ID())
+			usedProvider = provider
+			break
+		}
+		slog.Warn("provider failed, trying fallback",
+			"provider", provider.ID(),
+			"error", lastErr,
+			"request_id", requestID,
+		)
+		h.router.RecordFailure(provider.ID())
+	}
+
+	if resp == nil {
+		slog.Error("all providers failed", "error", lastErr, "request_id", requestID)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("all providers failed: %v", lastErr))
 		return
 	}
 
-	resp, err := provider.ChatCompletion(ctx, req)
-	if err != nil {
-		slog.Error("provider error", "error", err, "provider", provider.ID(), "request_id", requestID)
-		writeError(w, http.StatusBadGateway, "provider error")
-		return
+	if h.cache != nil && cacheKey != "" {
+		if err := h.cache.Set(ctx, cacheKey, resp, h.cacheTTL); err != nil {
+			slog.Warn("failed to cache response", "error", err, "request_id", requestID)
+		}
 	}
 
 	latency := time.Since(start).Milliseconds()
 	resp.Gateway = &domain.Gateway{
-		Provider:  provider.ID(),
+		Provider:  usedProvider.ID(),
 		LatencyMs: latency,
 		CostUSD:   0,
 		CacheHit:  false,
@@ -127,13 +199,14 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	slog.Info("request completed",
 		"request_id", requestID,
 		"tenant_id", tenant.ID,
-		"provider", provider.ID(),
+		"provider", usedProvider.ID(),
 		"model", req.Model,
 		"latency_ms", latency,
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Request-ID", requestID)
+	w.Header().Set("X-Cache", "MISS")
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -252,9 +325,10 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{
-		"status":    status,
-		"version":   "0.1.0",
-		"providers": providers,
+		"status":           status,
+		"version":          "0.2.0",
+		"providers":        providers,
+		"circuit_breakers": h.router.CircuitBreakerStates(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

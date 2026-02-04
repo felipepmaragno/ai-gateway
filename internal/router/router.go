@@ -2,7 +2,9 @@ package router
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/felipepmaragno/ai-gateway/internal/circuitbreaker"
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 )
 
@@ -17,36 +19,127 @@ type Provider interface {
 type Router struct {
 	providers       map[string]Provider
 	defaultProvider string
+	fallbackOrder   []string
+	cbManager       *circuitbreaker.Manager
+}
+
+type Config struct {
+	Providers       map[string]Provider
+	DefaultProvider string
+	FallbackOrder   []string
+	CBConfig        circuitbreaker.Config
 }
 
 func New(providers map[string]Provider, defaultProvider string) *Router {
+	fallbackOrder := make([]string, 0, len(providers))
+	for id := range providers {
+		fallbackOrder = append(fallbackOrder, id)
+	}
+
 	return &Router{
 		providers:       providers,
 		defaultProvider: defaultProvider,
+		fallbackOrder:   fallbackOrder,
+		cbManager:       circuitbreaker.NewManager(circuitbreaker.DefaultConfig()),
+	}
+}
+
+func NewWithConfig(cfg Config) *Router {
+	fallbackOrder := cfg.FallbackOrder
+	if len(fallbackOrder) == 0 {
+		fallbackOrder = make([]string, 0, len(cfg.Providers))
+		for id := range cfg.Providers {
+			fallbackOrder = append(fallbackOrder, id)
+		}
+	}
+
+	return &Router{
+		providers:       cfg.Providers,
+		defaultProvider: cfg.DefaultProvider,
+		fallbackOrder:   fallbackOrder,
+		cbManager:       circuitbreaker.NewManager(cfg.CBConfig),
 	}
 }
 
 func (r *Router) SelectProvider(ctx context.Context, providerHint string, model string) (Provider, error) {
 	if providerHint != "" {
 		if p, ok := r.providers[providerHint]; ok {
+			cb := r.cbManager.Get(providerHint)
+			if err := cb.Allow(); err != nil {
+				slog.Warn("circuit breaker open for requested provider", "provider", providerHint)
+				return nil, err
+			}
 			return p, nil
 		}
 		return nil, domain.ErrProviderNotFound
 	}
 
 	if p := r.findProviderByModel(model); p != nil {
-		return p, nil
+		cb := r.cbManager.Get(p.ID())
+		if cb.Allow() == nil {
+			return p, nil
+		}
+		slog.Warn("circuit breaker open for model provider, trying fallback", "provider", p.ID())
 	}
 
 	if p, ok := r.providers[r.defaultProvider]; ok {
-		return p, nil
+		cb := r.cbManager.Get(r.defaultProvider)
+		if cb.Allow() == nil {
+			return p, nil
+		}
+		slog.Warn("circuit breaker open for default provider, trying fallback", "provider", r.defaultProvider)
 	}
 
-	for _, p := range r.providers {
-		return p, nil
+	for _, id := range r.fallbackOrder {
+		cb := r.cbManager.Get(id)
+		if cb.Allow() == nil {
+			if p, ok := r.providers[id]; ok {
+				slog.Info("using fallback provider", "provider", id)
+				return p, nil
+			}
+		}
 	}
 
 	return nil, domain.ErrProviderNotFound
+}
+
+func (r *Router) SelectProviderWithFallback(ctx context.Context, providerHint string, model string) ([]Provider, error) {
+	var providers []Provider
+
+	primary, _ := r.SelectProvider(ctx, providerHint, model)
+	if primary != nil {
+		providers = append(providers, primary)
+	}
+
+	for _, id := range r.fallbackOrder {
+		if primary != nil && id == primary.ID() {
+			continue
+		}
+		cb := r.cbManager.Get(id)
+		if cb.Allow() == nil {
+			if p, ok := r.providers[id]; ok {
+				providers = append(providers, p)
+			}
+		}
+	}
+
+	if len(providers) == 0 {
+		return nil, domain.ErrProviderNotFound
+	}
+
+	return providers, nil
+}
+
+func (r *Router) RecordSuccess(providerID string) {
+	r.cbManager.Get(providerID).RecordSuccess()
+}
+
+func (r *Router) RecordFailure(providerID string) {
+	r.cbManager.Get(providerID).RecordFailure()
+}
+
+func (r *Router) CircuitBreakerStates() map[string]string {
+	return r.cbManager.States()
 }
 
 func (r *Router) findProviderByModel(model string) Provider {
