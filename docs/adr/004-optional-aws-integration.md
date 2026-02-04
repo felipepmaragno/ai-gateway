@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The target job description mentions AWS experience as a requirement. However, requiring AWS for local development creates friction:
+AWS services provide powerful capabilities for production deployments. However, requiring AWS for local development creates friction:
 - Developers need AWS accounts and credentials
 - Costs money even for development/testing
 - Adds complexity to getting started
@@ -18,7 +18,7 @@ Make AWS services (Secrets Manager, SQS, SNS) **optional** with interface-based 
 ## Rationale
 
 - **Simplifies local development** — Core functionality works with just PostgreSQL and Redis
-- **Demonstrates good design** — Interface-based architecture is a senior-level pattern
+- **Demonstrates good design** — Interface-based architecture enables flexibility
 - **Enables testing** — Can use LocalStack or in-memory implementations
 - **Gradual adoption** — Teams can start without AWS and add it later
 
@@ -90,8 +90,8 @@ aws:
 
 ### No AWS Integration
 
-- Misses opportunity to demonstrate AWS skills
-- Less production-ready
+- Limits production deployment options
+- Less cloud-native
 
 ### LocalStack Only
 

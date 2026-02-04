@@ -23,7 +23,7 @@ Use **Redis** for all distributed state management.
 - **Atomic operations** — INCR, ZADD, etc. for race-free counting
 - **TTL support** — Automatic expiration for rate limit windows and cache
 - **Battle-tested** — Widely used for these exact use cases
-- **Proven in dispatch project** — Already demonstrated competence with Redis
+- **Ecosystem** — Rich tooling and monitoring options
 
 ## Consequences
 

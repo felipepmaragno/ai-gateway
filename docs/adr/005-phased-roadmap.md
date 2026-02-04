@@ -17,7 +17,7 @@ The initial specification included many features for v0.1.0:
 This scope is too large for an MVP and risks:
 - Never shipping a working version
 - Losing focus on core functionality
-- Difficulty demonstrating progress
+- Difficulty tracking progress
 
 ## Decision
 
@@ -38,9 +38,9 @@ Focus: **Basic proxy that works**
 - Structured logging (slog)
 
 **Why this scope:**
-- Demonstrates core Go skills
-- Provides working software quickly
+- Delivers working software quickly
 - Enables testing without costs (Ollama)
+- Establishes foundation for future features
 
 ### v0.2.0 — Resilience
 
@@ -52,8 +52,8 @@ Focus: **Handle failures gracefully**
 - Response cache (Redis)
 
 **Why this scope:**
-- Demonstrates resilience patterns
-- Shows multi-provider architecture
+- Handles real-world failure scenarios
+- Enables provider flexibility
 - Cache reduces costs and latency
 
 ### v0.3.0 — Observability & Streaming
@@ -67,9 +67,9 @@ Focus: **Production visibility**
 - Enhanced metrics
 
 **Why this scope:**
-- OpenTelemetry is a job requirement
+- Production systems need visibility
 - Streaming is essential for chat UX
-- Cost tracking demonstrates business awareness
+- Cost tracking enables budget management
 
 ### v0.4.0 — AWS Integration
 
@@ -82,8 +82,8 @@ Focus: **Cloud-native features**
 - Complete admin API
 
 **Why this scope:**
-- AWS is a job requirement
-- Shows cloud integration skills
+- AWS is widely used in production
+- Enables enterprise deployment patterns
 - Completes the feature set
 
 ## Consequences
@@ -91,7 +91,7 @@ Focus: **Cloud-native features**
 ### Positive
 
 - Clear milestones for progress tracking
-- Each version is shippable and demonstrable
+- Each version is shippable
 - Can stop at any phase with working software
 - Easier to estimate and plan
 

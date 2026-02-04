@@ -965,8 +965,7 @@ ai-gateway/
 **Rationale:**
 - Enables horizontal scaling
 - Sub-millisecond latency
-- Battle-tested for these use cases
-- Already proven in dispatch project
+- Battle-tested and widely adopted
 
 **Trade-off:** Additional infrastructure dependency.
 
@@ -978,7 +977,7 @@ ai-gateway/
 - Simplifies local development
 - Can use LocalStack for testing
 - Core functionality works without AWS
-- Demonstrates interface-based design
+- Enables clean interface-based design
 
 **Trade-off:** Full AWS integration requires additional setup.
 
