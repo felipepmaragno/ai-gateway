@@ -233,6 +233,48 @@ curl -s -X DELETE http://localhost:8080/admin/tenants/{id}
 curl -s -X POST http://localhost:8080/admin/tenants/{id}/rotate-key | jq
 ```
 
+### Admin API Authentication (RBAC)
+
+Enable with `ADMIN_AUTH_ENABLED=true`. Default credentials: `admin:admin`
+
+```bash
+# Without auth - returns 401
+curl http://localhost:8080/admin/tenants
+# Unauthorized
+
+# With Basic Auth
+curl -u admin:admin http://localhost:8080/admin/tenants
+```
+
+**Roles and Permissions:**
+
+| Role | tenant:read | tenant:write | tenant:delete | usage:read | admin:manage |
+|------|:-----------:|:------------:|:-------------:|:----------:|:------------:|
+| **admin** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **editor** | ✅ | ✅ | ❌ | ✅ | ❌ |
+| **viewer** | ✅ | ❌ | ❌ | ✅ | ❌ |
+
+---
+
+## PostgreSQL Setup
+
+For persistent storage, set `DATABASE_URL` and run migrations:
+
+```bash
+# Start PostgreSQL
+docker run -d --name postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=aigateway \
+  -p 5432:5432 postgres:16
+
+# Run migrations
+psql $DATABASE_URL -f migrations/001_initial.up.sql
+
+# Start gateway with PostgreSQL
+DATABASE_URL="postgres://postgres:postgres@localhost:5432/aigateway?sslmode=disable" \
+  go run ./cmd/aigateway
+```
+
 ---
 
 ## Prometheus Metrics
@@ -256,6 +298,7 @@ Available at `http://localhost:8080/metrics`:
 |----------|---------|-------------|
 | `ADDR` | `:8080` | Server listen address |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `DATABASE_URL` | - | PostgreSQL connection string |
 | `REDIS_URL` | - | Redis URL for distributed cache/rate limiting |
 | `OPENAI_API_KEY` | - | OpenAI API key |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI base URL |
@@ -264,6 +307,8 @@ Available at `http://localhost:8080/metrics`:
 | `AWS_REGION` | - | AWS region for Bedrock |
 | `DEFAULT_PROVIDER` | `ollama` | Default provider when not specified |
 | `OTLP_ENDPOINT` | - | OpenTelemetry collector endpoint |
+| `ENCRYPTION_KEY` | - | AES-256 key for API key encryption |
+| `ADMIN_AUTH_ENABLED` | `false` | Enable Basic Auth for Admin API |
 
 ---
 
@@ -318,7 +363,7 @@ OPENAI_API_KEY=sk-xxx ANTHROPIC_API_KEY=sk-ant-xxx go run ./cmd/aigateway
 - [x] v0.2.0 — Anthropic + fallback + circuit breaker + cache
 - [x] v0.3.0 — Cost tracking + streaming + OpenTelemetry + Prometheus
 - [x] v0.4.0 — AWS Bedrock + Secrets Manager + SQS/SNS + Admin API
-- [ ] v0.5.0 — PostgreSQL persistence + API key encryption + RBAC
+- [x] v0.5.0 — PostgreSQL persistence + API key encryption + RBAC
 
 ## License
 
