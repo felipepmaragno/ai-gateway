@@ -198,14 +198,14 @@ type anthropicMessage struct {
 }
 
 type anthropicResponse struct {
-	ID           string            `json:"id"`
-	Type         string            `json:"type"`
-	Role         string            `json:"role"`
-	Content      []contentBlock    `json:"content"`
-	Model        string            `json:"model"`
-	StopReason   string            `json:"stop_reason"`
-	StopSequence *string           `json:"stop_sequence"`
-	Usage        anthropicUsage    `json:"usage"`
+	ID           string         `json:"id"`
+	Type         string         `json:"type"`
+	Role         string         `json:"role"`
+	Content      []contentBlock `json:"content"`
+	Model        string         `json:"model"`
+	StopReason   string         `json:"stop_reason"`
+	StopSequence *string        `json:"stop_sequence"`
+	Usage        anthropicUsage `json:"usage"`
 }
 
 type contentBlock struct {

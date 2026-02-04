@@ -16,12 +16,12 @@ import (
 )
 
 type AsyncRequest struct {
-	ID        string              `json:"id"`
-	TenantID  string              `json:"tenant_id"`
-	Request   domain.ChatRequest  `json:"request"`
-	Provider  string              `json:"provider,omitempty"`
-	Callback  string              `json:"callback,omitempty"`
-	CreatedAt time.Time           `json:"created_at"`
+	ID        string             `json:"id"`
+	TenantID  string             `json:"tenant_id"`
+	Request   domain.ChatRequest `json:"request"`
+	Provider  string             `json:"provider,omitempty"`
+	Callback  string             `json:"callback,omitempty"`
+	CreatedAt time.Time          `json:"created_at"`
 }
 
 type AsyncResponse struct {
@@ -97,9 +97,9 @@ func (q *SQSQueue) SendRequest(ctx context.Context, req AsyncRequest) error {
 
 func (q *SQSQueue) ReceiveRequests(ctx context.Context, maxMessages int) ([]AsyncRequest, error) {
 	input := &sqs.ReceiveMessageInput{
-		QueueUrl:            aws.String(q.requestQueueURL),
-		MaxNumberOfMessages: int32(maxMessages),
-		WaitTimeSeconds:     20,
+		QueueUrl:              aws.String(q.requestQueueURL),
+		MaxNumberOfMessages:   int32(maxMessages),
+		WaitTimeSeconds:       20,
 		MessageAttributeNames: []string{"All"},
 	}
 

@@ -44,12 +44,12 @@ func DefaultConfig() Config {
 }
 
 type CircuitBreaker struct {
-	mu               sync.RWMutex
-	state            State
-	failures         int
-	successes        int
-	lastFailure      time.Time
-	config           Config
+	mu          sync.RWMutex
+	state       State
+	failures    int
+	successes   int
+	lastFailure time.Time
+	config      Config
 }
 
 func New(cfg Config) *CircuitBreaker {
@@ -158,8 +158,8 @@ func (m *Manager) Get(providerID string) *CircuitBreaker {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if cb, ok := m.breakers[providerID]; ok {
-		return cb
+	if existingCB, ok := m.breakers[providerID]; ok {
+		return existingCB
 	}
 
 	cb = New(m.config)

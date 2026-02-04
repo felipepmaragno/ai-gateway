@@ -16,8 +16,8 @@ type InMemoryRateLimiter struct {
 }
 
 type window struct {
-	count    int
-	resetAt  time.Time
+	count   int
+	resetAt time.Time
 }
 
 func NewInMemoryRateLimiter() *InMemoryRateLimiter {

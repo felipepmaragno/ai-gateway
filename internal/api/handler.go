@@ -113,9 +113,9 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if h.budgetMonitor != nil {
-		exceeded, err := h.budgetMonitor.IsBudgetExceeded(ctx, tenant)
-		if err != nil {
-			slog.Error("budget check error", "error", err, "request_id", requestID)
+		exceeded, budgetErr := h.budgetMonitor.IsBudgetExceeded(ctx, tenant)
+		if budgetErr != nil {
+			slog.Error("budget check error", "error", budgetErr, "request_id", requestID)
 		} else if exceeded {
 			slog.Warn("budget exceeded", "tenant_id", tenant.ID, "request_id", requestID)
 			metrics.RequestsTotal.WithLabelValues(tenant.ID, "", "", "budget_exceeded").Inc()
@@ -144,7 +144,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req domain.ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
 		metrics.RequestsTotal.WithLabelValues(tenant.ID, "", "", "bad_request").Inc()
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -154,9 +154,9 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	skipCache := r.Header.Get("X-Skip-Cache") == "true"
 
 	if req.Stream {
-		provider, err := h.router.SelectProvider(ctx, providerHint, req.Model)
-		if err != nil {
-			slog.Error("provider selection failed", "error", err, "request_id", requestID)
+		provider, selectErr := h.router.SelectProvider(ctx, providerHint, req.Model)
+		if selectErr != nil {
+			slog.Error("provider selection failed", "error", selectErr, "request_id", requestID)
 			metrics.RequestsTotal.WithLabelValues(tenant.ID, "", req.Model, "no_provider").Inc()
 			writeError(w, http.StatusBadGateway, "no provider available")
 			return
@@ -258,7 +258,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if h.budgetMonitor != nil {
-			h.budgetMonitor.Check(ctx, tenant)
+			_, _ = h.budgetMonitor.Check(ctx, tenant)
 		}
 	}
 

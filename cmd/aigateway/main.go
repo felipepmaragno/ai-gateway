@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,10 +29,16 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("application error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	setupLogger(cfg.LogLevel)
@@ -41,13 +48,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	shutdownTelemetry, err := telemetry.Init(ctx, "ai-gateway", cfg.OTLPEndpoint)
-	if err != nil {
-		slog.Warn("failed to initialize telemetry", "error", err)
+	shutdownTelemetry, telemetryErr := telemetry.Init(ctx, "ai-gateway", cfg.OTLPEndpoint)
+	if telemetryErr != nil {
+		slog.Warn("failed to initialize telemetry", "error", telemetryErr)
 	}
 	defer func() {
 		if shutdownTelemetry != nil {
-			shutdownTelemetry(ctx)
+			_ = shutdownTelemetry(ctx)
 		}
 	}()
 
@@ -56,17 +63,18 @@ func main() {
 	var db *sql.DB
 
 	if cfg.DatabaseURL != "" {
-		var err error
 		db, err = sql.Open("postgres", cfg.DatabaseURL)
 		if err != nil {
-			slog.Error("failed to connect to database", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("connect to database: %w", err)
 		}
 		defer db.Close()
 
-		if err := db.PingContext(ctx); err != nil {
-			slog.Error("failed to ping database", "error", err)
-			os.Exit(1)
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
+
+		if pingErr := db.PingContext(ctx); pingErr != nil {
+			return fmt.Errorf("ping database: %w", pingErr)
 		}
 
 		tenantRepo = repository.NewPostgresTenantRepository(db)
@@ -82,8 +90,7 @@ func main() {
 	if cfg.RedisURL != "" {
 		rateLimiter, err = ratelimit.NewRedisRateLimiter(cfg.RedisURL)
 		if err != nil {
-			slog.Error("failed to connect to redis", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("connect to redis: %w", err)
 		}
 		slog.Info("using redis rate limiter", "url", cfg.RedisURL)
 	} else {
@@ -109,9 +116,9 @@ func main() {
 	}
 
 	if cfg.AWSRegion != "" {
-		bedrockProvider, err := bedrock.New(ctx, cfg.AWSRegion)
-		if err != nil {
-			slog.Warn("failed to initialize bedrock provider", "error", err)
+		bedrockProvider, bedrockErr := bedrock.New(ctx, cfg.AWSRegion)
+		if bedrockErr != nil {
+			slog.Warn("failed to initialize bedrock provider", "error", bedrockErr)
 		} else {
 			providers["bedrock"] = bedrockProvider
 			slog.Info("registered provider", "provider", "bedrock", "region", cfg.AWSRegion)
@@ -119,8 +126,7 @@ func main() {
 	}
 
 	if len(providers) == 0 {
-		slog.Error("no providers configured")
-		os.Exit(1)
+		return fmt.Errorf("no providers configured")
 	}
 
 	providerRouter := router.New(providers, cfg.DefaultProvider)
@@ -203,6 +209,7 @@ func main() {
 	}
 
 	slog.Info("server stopped")
+	return nil
 }
 
 func setupLogger(level string) {

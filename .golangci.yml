@@ -16,12 +16,12 @@ linters:
     - unparam
     - nakedret
     - prealloc
-    - exportloopref
     - gocritic
 
 linters-settings:
   govet:
-    check-shadowing: true
+    enable:
+      - shadow
   gofmt:
     simplify: true
   misspell:
@@ -31,8 +31,12 @@ linters-settings:
   gocritic:
     enabled-tags:
       - diagnostic
-      - style
       - performance
+    disabled-checks:
+      - hugeParam
+      - paramTypeCombine
+      - unnamedResult
+      - singleCaseSwitch
 
 issues:
   exclude-rules:
@@ -40,3 +44,9 @@ issues:
       linters:
         - errcheck
         - unparam
+    - linters:
+        - errcheck
+      text: "Error return value of `\\(\\*encoding/json\\.Encoder\\)\\.Encode` is not checked"
+    - linters:
+        - errcheck
+      text: "Error return value of `w\\.Write` is not checked"

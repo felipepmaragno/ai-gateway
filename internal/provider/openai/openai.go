@@ -138,7 +138,7 @@ func (p *Provider) ChatCompletionStream(ctx context.Context, req domain.ChatRequ
 }
 
 func (p *Provider) Models(ctx context.Context) ([]domain.Model, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -168,7 +168,7 @@ func (p *Provider) Models(ctx context.Context) ([]domain.Model, error) {
 }
 
 func (p *Provider) HealthCheck(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", http.NoBody)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

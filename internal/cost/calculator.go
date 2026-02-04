@@ -94,10 +94,10 @@ func (t *InMemoryTracker) GetTenantUsage(ctx context.Context, tenantID string, s
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	var result []UsageRecord
-	for _, r := range t.records {
-		if r.TenantID == tenantID && r.Timestamp.After(since) {
-			result = append(result, r)
+	result := make([]UsageRecord, 0, len(t.records))
+	for i := range t.records {
+		if t.records[i].TenantID == tenantID && t.records[i].Timestamp.After(since) {
+			result = append(result, t.records[i])
 		}
 	}
 	return result, nil
@@ -108,9 +108,9 @@ func (t *InMemoryTracker) GetTenantTotalCost(ctx context.Context, tenantID strin
 	defer t.mu.RUnlock()
 
 	var total float64
-	for _, r := range t.records {
-		if r.TenantID == tenantID && r.Timestamp.After(since) {
-			total += r.CostUSD
+	for i := range t.records {
+		if t.records[i].TenantID == tenantID && t.records[i].Timestamp.After(since) {
+			total += t.records[i].CostUSD
 		}
 	}
 	return total, nil

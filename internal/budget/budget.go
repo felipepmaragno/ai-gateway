@@ -69,7 +69,7 @@ func (m *Monitor) Check(ctx context.Context, tenant *domain.Tenant) (*Alert, err
 		return nil, nil
 	}
 
-	startOfMonth := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -time.Now().Day()+1)
+	startOfMonth := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -time.Now().Day()+1)
 	currentCost, err := m.tracker.GetTenantTotalCost(ctx, tenant.ID, startOfMonth)
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func (m *Monitor) IsBudgetExceeded(ctx context.Context, tenant *domain.Tenant) (
 		return false, nil
 	}
 
-	startOfMonth := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -time.Now().Day()+1)
+	startOfMonth := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -time.Now().Day()+1)
 	currentCost, err := m.tracker.GetTenantTotalCost(ctx, tenant.ID, startOfMonth)
 	if err != nil {
 		return false, err
