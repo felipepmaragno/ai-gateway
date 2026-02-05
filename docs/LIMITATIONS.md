@@ -162,7 +162,7 @@ This document outlines the current limitations of the AI Gateway and potential i
 
 ### Documentation
 - [ ] API reference with OpenAPI spec
-- [ ] Architecture decision records (ADRs)
+- [x] Architecture decision records (ADRs) — 10 ADRs documented
 - [ ] Runbooks for common operations
 - [ ] Incident response playbooks
 
