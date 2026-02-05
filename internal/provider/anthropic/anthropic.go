@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
+	"github.com/felipepmaragno/ai-gateway/internal/httputil"
 )
 
 const (
@@ -29,9 +30,7 @@ func New(apiKey string) *Provider {
 	return &Provider{
 		apiKey:  apiKey,
 		baseURL: defaultBaseURL,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		client:  httputil.DefaultClient(),
 	}
 }
 

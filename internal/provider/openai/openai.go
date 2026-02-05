@@ -9,9 +9,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
+	"github.com/felipepmaragno/ai-gateway/internal/httputil"
 )
 
 type Provider struct {
@@ -24,9 +24,7 @@ func New(apiKey, baseURL string) *Provider {
 	return &Provider{
 		apiKey:  apiKey,
 		baseURL: baseURL,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		client:  httputil.DefaultClient(),
 	}
 }
 
