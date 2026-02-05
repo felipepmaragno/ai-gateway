@@ -1,3 +1,5 @@
+// Package httputil provides a pre-configured HTTP client with proper timeouts.
+// All LLM providers should use this client to ensure consistent timeout behavior.
 package httputil
 
 import (
@@ -6,16 +8,18 @@ import (
 	"time"
 )
 
+// ClientConfig defines timeout and connection pool settings for HTTP clients.
 type ClientConfig struct {
-	Timeout             time.Duration
-	DialTimeout         time.Duration
-	TLSHandshakeTimeout time.Duration
-	ResponseHeaderTimeout time.Duration
-	IdleConnTimeout     time.Duration
-	MaxIdleConns        int
-	MaxIdleConnsPerHost int
+	Timeout               time.Duration // Total request timeout
+	DialTimeout           time.Duration // TCP connection timeout
+	TLSHandshakeTimeout   time.Duration // TLS negotiation timeout
+	ResponseHeaderTimeout time.Duration // Time to wait for response headers
+	IdleConnTimeout       time.Duration // Keep-alive connection timeout
+	MaxIdleConns          int           // Max idle connections across all hosts
+	MaxIdleConnsPerHost   int           // Max idle connections per host
 }
 
+// DefaultConfig returns production-ready timeout settings.
 func DefaultConfig() ClientConfig {
 	return ClientConfig{
 		Timeout:               120 * time.Second,
@@ -28,6 +32,7 @@ func DefaultConfig() ClientConfig {
 	}
 }
 
+// NewClient creates an HTTP client with the specified configuration.
 func NewClient(cfg ClientConfig) *http.Client {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
@@ -48,6 +53,7 @@ func NewClient(cfg ClientConfig) *http.Client {
 	}
 }
 
+// DefaultClient returns an HTTP client with production-ready settings.
 func DefaultClient() *http.Client {
 	return NewClient(DefaultConfig())
 }

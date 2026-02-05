@@ -1,3 +1,6 @@
+// Package router provides LLM provider selection and load balancing.
+// It selects the best available provider based on health status,
+// tenant preferences, and fallback chains for resilience.
 package router
 
 import (
@@ -8,6 +11,8 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 )
 
+// Provider defines the interface that all LLM providers must implement.
+// Each provider handles communication with a specific LLM service (OpenAI, Anthropic, etc.).
 type Provider interface {
 	ID() string
 	ChatCompletion(ctx context.Context, req domain.ChatRequest) (*domain.ChatResponse, error)
@@ -16,6 +21,7 @@ type Provider interface {
 	HealthCheck(ctx context.Context) error
 }
 
+// Router manages provider selection with health-aware routing and automatic fallback.
 type Router struct {
 	providers       map[string]Provider
 	defaultProvider string

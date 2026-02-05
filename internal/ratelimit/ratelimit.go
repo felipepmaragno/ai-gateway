@@ -1,3 +1,6 @@
+// Package ratelimit provides request rate limiting per tenant.
+// It uses a sliding window algorithm to control requests-per-minute (RPM).
+// Supports both in-memory (single instance) and Redis (distributed) backends.
 package ratelimit
 
 import (
@@ -6,10 +9,14 @@ import (
 	"time"
 )
 
+// RateLimiter defines the interface for rate limiting backends.
+// Returns whether the request is allowed, remaining quota, and reset time.
 type RateLimiter interface {
 	Allow(ctx context.Context, tenantID string, limit int) (allowed bool, remaining int, resetAt time.Time, err error)
 }
 
+// InMemoryRateLimiter implements rate limiting using in-memory sliding windows.
+// Suitable for single-instance deployments.
 type InMemoryRateLimiter struct {
 	mu      sync.Mutex
 	windows map[string]*window

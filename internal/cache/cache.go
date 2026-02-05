@@ -1,3 +1,6 @@
+// Package cache provides response caching for deterministic LLM requests.
+// It supports both in-memory (single instance) and Redis (distributed) backends.
+// Caching reduces latency and costs by returning stored responses for identical requests.
 package cache
 
 import (
@@ -12,11 +15,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Cache defines the interface for response caching backends.
 type Cache interface {
 	Get(ctx context.Context, key string) (*domain.ChatResponse, bool)
 	Set(ctx context.Context, key string, resp *domain.ChatResponse, ttl time.Duration) error
 }
 
+// GenerateCacheKey creates a unique cache key from a chat request.
+// The key is a SHA-256 hash of the model, messages, temperature, and max_tokens.
 func GenerateCacheKey(req domain.ChatRequest) string {
 	data, _ := json.Marshal(struct {
 		Model       string           `json:"model"`

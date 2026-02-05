@@ -1,3 +1,10 @@
+// Package circuitbreaker implements the circuit breaker pattern for failure protection.
+// It prevents cascading failures by failing fast when a service is unhealthy.
+//
+// States:
+//   - Closed: Normal operation, requests pass through
+//   - Open: Service unhealthy, requests fail immediately
+//   - Half-Open: Testing recovery, limited requests allowed
 package circuitbreaker
 
 import (
@@ -8,12 +15,13 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 )
 
+// State represents the current state of a circuit breaker.
 type State int
 
 const (
-	StateClosed State = iota
-	StateOpen
-	StateHalfOpen
+	StateClosed   State = iota // Normal operation
+	StateOpen                  // Failing fast
+	StateHalfOpen              // Testing recovery
 )
 
 func (s State) String() string {
@@ -29,12 +37,14 @@ func (s State) String() string {
 	}
 }
 
+// Config defines circuit breaker behavior.
 type Config struct {
-	FailureThreshold int
-	SuccessThreshold int
-	Timeout          time.Duration
+	FailureThreshold int           // Failures before opening
+	SuccessThreshold int           // Successes to close from half-open
+	Timeout          time.Duration // Time before transitioning to half-open
 }
 
+// DefaultConfig returns sensible defaults for most use cases.
 func DefaultConfig() Config {
 	return Config{
 		FailureThreshold: 5,
@@ -43,6 +53,7 @@ func DefaultConfig() Config {
 	}
 }
 
+// CircuitBreaker tracks failures and controls request flow to a service.
 type CircuitBreaker struct {
 	mu          sync.RWMutex
 	state       State

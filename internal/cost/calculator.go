@@ -1,3 +1,5 @@
+// Package cost provides usage tracking and cost calculation for LLM requests.
+// It calculates costs based on model-specific pricing and tracks usage per tenant.
 package cost
 
 import (
@@ -8,6 +10,7 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 )
 
+// ModelPricing defines the cost per 1K tokens for a model.
 type ModelPricing struct {
 	InputPer1K  float64
 	OutputPer1K float64
@@ -26,16 +29,19 @@ var defaultPricing = map[string]ModelPricing{
 	"claude-3-haiku-20240307":    {InputPer1K: 0.00025, OutputPer1K: 0.00125},
 }
 
+// Calculator computes costs for LLM requests based on model pricing.
 type Calculator struct {
 	pricing map[string]ModelPricing
 }
 
+// NewCalculator creates a Calculator with default model pricing.
 func NewCalculator() *Calculator {
 	return &Calculator{
 		pricing: defaultPricing,
 	}
 }
 
+// Calculate returns the cost in USD for a request based on token usage.
 func (c *Calculator) Calculate(model string, usage domain.Usage) float64 {
 	pricing, ok := c.pricing[model]
 	if !ok {
@@ -52,6 +58,7 @@ func (c *Calculator) SetPricing(model string, pricing ModelPricing) {
 	c.pricing[model] = pricing
 }
 
+// UsageRecord represents a single LLM request with its token usage and cost.
 type UsageRecord struct {
 	TenantID     string
 	RequestID    string
@@ -65,6 +72,7 @@ type UsageRecord struct {
 	Timestamp    time.Time
 }
 
+// Tracker defines the interface for usage tracking backends.
 type Tracker interface {
 	Record(ctx context.Context, record UsageRecord) error
 	GetTenantUsage(ctx context.Context, tenantID string, since time.Time) ([]UsageRecord, error)
