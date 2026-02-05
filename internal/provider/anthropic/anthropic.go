@@ -231,7 +231,7 @@ type streamDelta struct {
 
 func toAnthropicRequest(req domain.ChatRequest) anthropicRequest {
 	var systemPrompt string
-	var messages []anthropicMessage
+	messages := make([]anthropicMessage, 0, len(req.Messages))
 
 	for _, m := range req.Messages {
 		if m.Role == "system" {

@@ -228,7 +228,7 @@ func mapModelID(model string) string {
 
 func toBedrockRequest(req domain.ChatRequest) bedrockRequest {
 	var systemPrompt string
-	var messages []bedrockMessage
+	messages := make([]bedrockMessage, 0, len(req.Messages))
 
 	for _, m := range req.Messages {
 		if m.Role == "system" {
