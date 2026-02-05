@@ -12,6 +12,7 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/cost"
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 	"github.com/felipepmaragno/ai-gateway/internal/repository"
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
 
@@ -43,10 +44,10 @@ func TestPostgresTenantRepository_CRUD(t *testing.T) {
 	ctx := context.Background()
 
 	tenant := &domain.Tenant{
-		ID:           "test-tenant-" + time.Now().Format("20060102150405"),
+		ID:           uuid.New().String(),
 		Name:         "Test Tenant",
 		APIKey:       "gw-test-key-123",
-		APIKeyHash:   "hash123",
+		APIKeyHash:   "hash" + uuid.New().String()[:8],
 		BudgetUSD:    100.0,
 		RateLimitRPM: 60,
 		Enabled:      true,
@@ -116,9 +117,9 @@ func TestPostgresUsageRepository_Record(t *testing.T) {
 	ctx := context.Background()
 
 	tenant := &domain.Tenant{
-		ID:           "usage-test-tenant-" + time.Now().Format("20060102150405"),
+		ID:           uuid.New().String(),
 		Name:         "Usage Test Tenant",
-		APIKeyHash:   "usagehash123",
+		APIKeyHash:   "usagehash" + uuid.New().String()[:8],
 		BudgetUSD:    100.0,
 		RateLimitRPM: 60,
 		Enabled:      true,
