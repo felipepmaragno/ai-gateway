@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/felipepmaragno/ai-gateway/internal/crypto"
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 	"github.com/felipepmaragno/ai-gateway/internal/repository"
 	"github.com/google/uuid"
@@ -66,10 +67,12 @@ func (h *AdminHandler) createTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	apiKey := generateAPIKey()
 	tenant := &domain.Tenant{
 		ID:           uuid.New().String(),
 		Name:         req.Name,
-		APIKey:       generateAPIKey(),
+		APIKey:       apiKey,
+		APIKeyHash:   crypto.HashAPIKey(apiKey),
 		RateLimitRPM: req.RateLimitRPM,
 		BudgetUSD:    req.BudgetUSD,
 		CreatedAt:    time.Now(),

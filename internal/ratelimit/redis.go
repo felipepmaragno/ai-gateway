@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -67,7 +68,7 @@ func (r *RedisRateLimiter) Allow(ctx context.Context, tenantID string, limit int
 }
 
 func formatTime(t time.Time) string {
-	return string(rune(t.UnixNano()))
+	return fmt.Sprintf("%d", t.UnixNano())
 }
 
 func (r *RedisRateLimiter) Close() error {
