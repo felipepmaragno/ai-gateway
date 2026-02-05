@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+bin/
+dist/
+
+# Test files
+*_test.go
+coverage.out
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Observability configs (mounted separately)
+observability/
+
+# Local env files
+.env
+.env.local

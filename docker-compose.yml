@@ -1,4 +1,32 @@
 services:
+  aigateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ADDR: ":8080"
+      LOG_LEVEL: info
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://aigateway:aigateway@postgres:5432/aigateway?sslmode=disable
+      OLLAMA_BASE_URL: http://ollama:11434
+      DEFAULT_PROVIDER: ollama
+      # OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   ollama:
     image: ollama/ollama:latest
     ports:
@@ -67,3 +95,7 @@ volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+
+networks:
+  default:
+    name: aigateway-network
