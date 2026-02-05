@@ -17,6 +17,7 @@ import (
 	"github.com/felipepmaragno/ai-gateway/internal/cache"
 	"github.com/felipepmaragno/ai-gateway/internal/config"
 	"github.com/felipepmaragno/ai-gateway/internal/cost"
+	"github.com/felipepmaragno/ai-gateway/internal/metrics"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/anthropic"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/bedrock"
 	"github.com/felipepmaragno/ai-gateway/internal/provider/ollama"
@@ -127,6 +128,11 @@ func run() error {
 
 	if len(providers) == 0 {
 		return fmt.Errorf("no providers configured")
+	}
+
+	// Initialize circuit breaker state metrics for all providers
+	for providerName := range providers {
+		metrics.SetCircuitBreakerState(providerName, 0) // 0 = closed (healthy)
 	}
 
 	providerRouter := router.New(providers, cfg.DefaultProvider)
