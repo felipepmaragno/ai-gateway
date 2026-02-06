@@ -34,7 +34,7 @@ type Monitor struct {
 	tracker       cost.Tracker
 	alertHandlers []AlertHandler
 	thresholds    Thresholds
-	lastAlerts    map[string]AlertLevel
+	deduplicator  AlertDeduplicator
 }
 
 type Thresholds struct {
@@ -49,13 +49,33 @@ func DefaultThresholds() Thresholds {
 	}
 }
 
-func NewMonitor(tracker cost.Tracker, thresholds Thresholds) *Monitor {
-	return &Monitor{
+// MonitorOption configures a Monitor.
+type MonitorOption func(*Monitor)
+
+// WithDeduplicator sets a custom alert deduplicator.
+// Use this to enable distributed deduplication with Redis.
+func WithDeduplicator(d AlertDeduplicator) MonitorOption {
+	return func(m *Monitor) {
+		m.deduplicator = d
+	}
+}
+
+// NewMonitor creates a new budget monitor.
+// By default, it uses in-memory deduplication.
+// Use WithDeduplicator option for distributed deduplication.
+func NewMonitor(tracker cost.Tracker, thresholds Thresholds, opts ...MonitorOption) *Monitor {
+	m := &Monitor{
 		tracker:       tracker,
 		thresholds:    thresholds,
 		alertHandlers: make([]AlertHandler, 0),
-		lastAlerts:    make(map[string]AlertLevel),
+		deduplicator:  NewInMemoryDeduplicator(),
 	}
+
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
 }
 
 func (m *Monitor) OnAlert(handler AlertHandler) {
@@ -86,17 +106,13 @@ func (m *Monitor) Check(ctx context.Context, tenant *domain.Tenant) (*Alert, err
 	case percentage >= m.thresholds.Warning:
 		level = AlertLevelWarning
 	default:
-		m.mu.Lock()
-		delete(m.lastAlerts, tenant.ID)
-		m.mu.Unlock()
+		// Usage dropped below warning threshold, clear alert state
+		m.deduplicator.ClearAlert(ctx, tenant.ID)
 		return nil, nil
 	}
 
-	m.mu.RLock()
-	lastLevel, hasLast := m.lastAlerts[tenant.ID]
-	m.mu.RUnlock()
-
-	if hasLast && lastLevel == level {
+	// Check if we should send this alert (deduplication)
+	if !m.deduplicator.ShouldAlert(ctx, tenant.ID, level) {
 		return nil, nil
 	}
 
@@ -109,11 +125,10 @@ func (m *Monitor) Check(ctx context.Context, tenant *domain.Tenant) (*Alert, err
 		Timestamp:  time.Now(),
 	}
 
-	m.mu.Lock()
-	m.lastAlerts[tenant.ID] = level
+	m.mu.RLock()
 	handlers := make([]AlertHandler, len(m.alertHandlers))
 	copy(handlers, m.alertHandlers)
-	m.mu.Unlock()
+	m.mu.RUnlock()
 
 	for _, handler := range handlers {
 		handler(*alert)

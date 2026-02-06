@@ -161,7 +161,19 @@ func run() error {
 		slog.Info("using in-memory cache")
 	}
 
-	budgetMonitor := budget.NewMonitor(costTracker, budget.DefaultThresholds())
+	// Create budget monitor with optional distributed deduplication
+	var budgetOpts []budget.MonitorOption
+	if cfg.RedisURL != "" {
+		dedup, err := budget.NewRedisDeduplicator(cfg.RedisURL, 1*time.Hour)
+		if err != nil {
+			slog.Warn("failed to create redis deduplicator, using in-memory", "error", err)
+		} else {
+			budgetOpts = append(budgetOpts, budget.WithDeduplicator(dedup))
+			slog.Info("using distributed budget alert deduplication", "backend", "redis")
+		}
+	}
+
+	budgetMonitor := budget.NewMonitor(costTracker, budget.DefaultThresholds(), budgetOpts...)
 	budgetMonitor.OnAlert(budget.LogAlertHandler)
 
 	handler := api.NewHandler(api.HandlerConfig{
