@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-gateway-config
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: ai-gateway
+data:
+  ADDR: ":8080"
+  LOG_LEVEL: "info"
+  DEFAULT_PROVIDER: "ollama"
+  OLLAMA_BASE_URL: "http://ollama.ai-gateway.svc.cluster.local:11434"
+  OPENAI_BASE_URL: "https://api.openai.com/v1"
+  USE_DISTRIBUTED_CB: "true"
+  SHUTDOWN_TIMEOUT: "30"
+  DRAIN_TIMEOUT: "15"
