@@ -389,6 +389,49 @@ flowchart LR
 
 ---
 
+## Kubernetes Deployment
+
+The AI Gateway is designed for horizontal scaling with Kubernetes.
+
+### Quick Deploy
+
+```bash
+# Build and push image
+docker build -t your-registry/ai-gateway:latest .
+docker push your-registry/ai-gateway:latest
+
+# Update image in k8s/deployment.yaml, then:
+kubectl apply -k k8s/
+```
+
+### Features
+
+- **Horizontal Pod Autoscaler**: 2-10 replicas based on CPU/Memory
+- **Distributed State**: Circuit breaker and budget alerts via Redis
+- **Graceful Shutdown**: Connection draining before termination
+- **Health Probes**: Liveness and readiness checks
+- **Pod Disruption Budget**: Ensures availability during updates
+- **Security**: Non-root, read-only filesystem, no capabilities
+
+### Manifests
+
+```
+k8s/
+├── namespace.yaml      # ai-gateway namespace
+├── configmap.yaml      # Non-sensitive config
+├── secret.yaml         # API keys, DB URLs (template)
+├── deployment.yaml     # Main deployment with probes
+├── service.yaml        # ClusterIP service
+├── hpa.yaml            # Autoscaler (2-10 replicas)
+├── pdb.yaml            # Pod disruption budget
+├── serviceaccount.yaml # Service account
+└── kustomization.yaml  # Kustomize config
+```
+
+> **📖 See [k8s/README.md](k8s/README.md) for detailed deployment instructions.**
+
+---
+
 ## Development
 
 ```bash
@@ -414,6 +457,7 @@ OPENAI_API_KEY=sk-xxx ANTHROPIC_API_KEY=sk-ant-xxx go run ./cmd/aigateway
 - [x] v0.3.0 — Cost tracking + streaming + OpenTelemetry + Prometheus
 - [x] v0.4.0 — AWS Bedrock + Secrets Manager + SQS/SNS + Admin API
 - [x] v0.5.0 — PostgreSQL persistence + API key encryption + RBAC
+- [x] v0.6.0 — Horizontal scaling + Kubernetes + HPA ([ADR-011](docs/adr/011-horizontal-scaling.md))
 
 ## License
 

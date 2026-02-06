@@ -414,6 +414,106 @@ flowchart TB
 
 ---
 
+## 11. Graceful Shutdown Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant K8s as Kubernetes
+    participant Pod as Gateway Pod
+    participant LB as Load Balancer
+    participant Redis
+    participant Clients
+
+    K8s->>Pod: SIGTERM
+    Pod->>Pod: shuttingDown = true
+    Pod->>LB: Remove from endpoints
+    
+    Note over Pod: New requests get 503
+    
+    Pod->>Pod: SetKeepAlivesEnabled(false)
+    
+    rect rgb(255, 240, 200)
+        Note over Pod,Clients: Connection Draining (up to DRAIN_TIMEOUT)
+        Clients->>Pod: In-flight request
+        Pod->>Pod: activeConns.Wait()
+        Pod-->>Clients: Complete response
+    end
+    
+    alt All connections drained
+        Pod->>Pod: "all connections drained"
+    else Drain timeout exceeded
+        Pod->>Pod: "drain timeout, forcing shutdown"
+    end
+    
+    Pod->>Pod: srv.Shutdown()
+    Pod->>Redis: Close connections
+    Pod->>K8s: Exit 0
+```
+
+---
+
+## 12. Distributed Circuit Breaker State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    
+    Closed --> Open: failures >= threshold
+    Closed --> Closed: success (reset failures)
+    
+    Open --> HalfOpen: timeout elapsed
+    Open --> Open: request blocked
+    
+    HalfOpen --> Closed: successes >= threshold
+    HalfOpen --> Open: any failure
+    
+    note right of Closed
+        All requests allowed
+        Failures counted
+    end note
+    
+    note right of Open
+        All requests blocked
+        Returns ErrCircuitBreakerOpen
+    end note
+    
+    note right of HalfOpen
+        Limited requests allowed
+        Testing if service recovered
+    end note
+```
+
+---
+
+## 13. Health Check Decision Flow
+
+```mermaid
+flowchart TD
+    REQ([GET /health/ready]) --> CHECKERS{Health Checkers<br/>Configured?}
+    
+    CHECKERS -->|No| OK_SIMPLE([200 OK])
+    CHECKERS -->|Yes| RUN[Run All Checks<br/>Concurrently]
+    
+    RUN --> REDIS[Redis Ping]
+    RUN --> PG[Postgres Ping]
+    
+    REDIS --> COLLECT[Collect Results]
+    PG --> COLLECT
+    
+    COLLECT --> ALL_OK{All Healthy?}
+    
+    ALL_OK -->|Yes| READY([200 Ready])
+    ALL_OK -->|No| NOT_READY([503 Not Ready])
+    
+    subgraph Response
+        READY --> R1["status: ready<br/>checks: {redis: ok, postgres: ok}"]
+        NOT_READY --> R2["status: not_ready<br/>checks: {redis: error, ...}"]
+    end
+```
+
+---
+
 ## Viewing These Diagrams
 
 These diagrams use [Mermaid](https://mermaid.js.org/) syntax and can be rendered:

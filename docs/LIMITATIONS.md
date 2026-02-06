@@ -21,11 +21,16 @@ This document outlines the current limitations of the AI Gateway and potential i
 | Limitation | Impact | Severity | Status |
 |------------|--------|----------|--------|
 | **Single-region deployment** | No geo-distribution or failover | High | Planned |
-| **No horizontal pod autoscaling config** | Manual scaling required | Medium | [ADR-011](adr/011-horizontal-scaling.md) |
-| **In-memory circuit breaker state** | State not shared across instances | High | [ADR-011](adr/011-horizontal-scaling.md) |
+| ~~No horizontal pod autoscaling config~~ | ~~Manual scaling required~~ | ~~Medium~~ | ✅ Resolved |
+| ~~In-memory circuit breaker state~~ | ~~State not shared across instances~~ | ~~High~~ | ✅ Resolved |
 | **No connection pooling tuning** | Default pool sizes may be insufficient | Low | — |
 
-> **See [ADR-011: Horizontal Scaling Strategy](adr/011-horizontal-scaling.md)** for the complete implementation plan.
+> **✅ [ADR-011: Horizontal Scaling Strategy](adr/011-horizontal-scaling.md)** has been fully implemented:
+> - Distributed circuit breaker with Redis + Lua scripts
+> - Distributed budget alert deduplication
+> - Graceful shutdown with connection draining
+> - Enhanced health checks with dependency verification
+> - Kubernetes manifests with HPA (2-10 replicas)
 
 ### 3. Observability
 
