@@ -18,12 +18,14 @@ This document outlines the current limitations of the AI Gateway and potential i
 
 ### 2. Scalability
 
-| Limitation | Impact | Severity |
-|------------|--------|----------|
-| **Single-region deployment** | No geo-distribution or failover | High |
-| **No horizontal pod autoscaling config** | Manual scaling required | Medium |
-| **In-memory circuit breaker state** | State not shared across instances | High |
-| **No connection pooling tuning** | Default pool sizes may be insufficient | Low |
+| Limitation | Impact | Severity | Status |
+|------------|--------|----------|--------|
+| **Single-region deployment** | No geo-distribution or failover | High | Planned |
+| **No horizontal pod autoscaling config** | Manual scaling required | Medium | [ADR-011](adr/011-horizontal-scaling.md) |
+| **In-memory circuit breaker state** | State not shared across instances | High | [ADR-011](adr/011-horizontal-scaling.md) |
+| **No connection pooling tuning** | Default pool sizes may be insufficient | Low | — |
+
+> **See [ADR-011: Horizontal Scaling Strategy](adr/011-horizontal-scaling.md)** for the complete implementation plan.
 
 ### 3. Observability
 
@@ -162,7 +164,7 @@ This document outlines the current limitations of the AI Gateway and potential i
 
 ### Documentation
 - [ ] API reference with OpenAPI spec
-- [x] Architecture decision records (ADRs) — 10 ADRs documented
+- [x] Architecture decision records (ADRs) — 11 ADRs documented
 - [ ] Runbooks for common operations
 - [ ] Incident response playbooks
 
