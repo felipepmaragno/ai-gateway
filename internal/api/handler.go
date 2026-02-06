@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -31,6 +32,7 @@ type HandlerConfig struct {
 	CostCalculator *cost.Calculator
 	CostTracker    cost.Tracker
 	BudgetMonitor  *budget.Monitor
+	HealthCheckers []HealthChecker
 }
 
 type Handler struct {
@@ -42,6 +44,7 @@ type Handler struct {
 	costCalculator *cost.Calculator
 	costTracker    cost.Tracker
 	budgetMonitor  *budget.Monitor
+	healthCheckers []HealthChecker
 	mux            *http.ServeMux
 }
 
@@ -65,6 +68,7 @@ func NewHandler(cfg HandlerConfig) *Handler {
 		costCalculator: costCalc,
 		costTracker:    cfg.CostTracker,
 		budgetMonitor:  cfg.BudgetMonitor,
+		healthCheckers: cfg.HealthCheckers,
 		mux:            http.NewServeMux(),
 	}
 
@@ -492,8 +496,44 @@ func (h *Handler) handleHealthLive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleHealthReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// If no health checkers configured, just return ok
+	if len(h.healthCheckers) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "ready",
+			"version": "0.5.0",
+		})
+		return
+	}
+
+	results := runHealthChecks(ctx, h.healthCheckers)
+
+	allHealthy := true
+	for _, result := range results {
+		if result.Status != "ok" {
+			allHealthy = false
+			break
+		}
+	}
+
+	status := HealthStatus{
+		Status:  "ready",
+		Checks:  results,
+		Version: "0.5.0",
+	}
+
+	httpStatus := http.StatusOK
+	if !allHealthy {
+		status.Status = "not_ready"
+		httpStatus = http.StatusServiceUnavailable
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.WriteHeader(httpStatus)
+	json.NewEncoder(w).Encode(status)
 }
 
 func extractAPIKey(r *http.Request) string {

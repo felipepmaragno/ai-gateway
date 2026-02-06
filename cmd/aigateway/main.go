@@ -178,14 +178,28 @@ func run() error {
 	budgetMonitor := budget.NewMonitor(costTracker, budget.DefaultThresholds(), budgetOpts...)
 	budgetMonitor.OnAlert(budget.LogAlertHandler)
 
+	// Configure health checkers for readiness probe
+	var healthCheckers []api.HealthChecker
+	if cfg.RedisURL != "" {
+		if redisChecker, err := api.NewRedisHealthChecker(cfg.RedisURL); err == nil {
+			healthCheckers = append(healthCheckers, redisChecker)
+			slog.Info("added redis health checker")
+		}
+	}
+	if db != nil {
+		healthCheckers = append(healthCheckers, api.NewPostgresHealthChecker(db))
+		slog.Info("added postgres health checker")
+	}
+
 	handler := api.NewHandler(api.HandlerConfig{
-		TenantRepo:    tenantRepo,
-		RateLimiter:   rateLimiter,
-		Router:        providerRouter,
-		Cache:         responseCache,
-		CacheTTL:      5 * time.Minute,
-		CostTracker:   costTracker,
-		BudgetMonitor: budgetMonitor,
+		TenantRepo:     tenantRepo,
+		RateLimiter:    rateLimiter,
+		Router:         providerRouter,
+		Cache:          responseCache,
+		CacheTTL:       5 * time.Minute,
+		CostTracker:    costTracker,
+		BudgetMonitor:  budgetMonitor,
+		HealthCheckers: healthCheckers,
 	})
 
 	adminHandler := api.NewAdminHandler(tenantRepo)
