@@ -135,7 +135,17 @@ func run() error {
 		metrics.SetCircuitBreakerState(providerName, 0) // 0 = closed (healthy)
 	}
 
-	providerRouter := router.New(providers, cfg.DefaultProvider)
+	// Create router with circuit breaker configuration
+	var providerRouter *router.Router
+	if cfg.UseDistributedCircuitBreaker && cfg.RedisURL != "" {
+		providerRouter = router.NewWithConfig(router.Config{
+			Providers:       providers,
+			DefaultProvider: cfg.DefaultProvider,
+			RedisURL:        cfg.RedisURL,
+		})
+	} else {
+		providerRouter = router.New(providers, cfg.DefaultProvider)
+	}
 
 	var responseCache cache.Cache
 	if cfg.RedisURL != "" {

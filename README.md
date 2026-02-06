@@ -309,6 +309,7 @@ Available at `http://localhost:8080/metrics`:
 | `OTLP_ENDPOINT` | - | OpenTelemetry collector endpoint |
 | `ENCRYPTION_KEY` | - | AES-256 key for API key encryption |
 | `ADMIN_AUTH_ENABLED` | `false` | Enable Basic Auth for Admin API |
+| `USE_DISTRIBUTED_CB` | `false` | Use Redis-backed distributed circuit breaker |
 
 ---
 

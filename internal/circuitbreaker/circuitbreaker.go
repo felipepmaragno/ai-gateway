@@ -5,6 +5,10 @@
 //   - Closed: Normal operation, requests pass through
 //   - Open: Service unhealthy, requests fail immediately
 //   - Half-Open: Testing recovery, limited requests allowed
+//
+// Implementations:
+//   - InMemoryCircuitBreaker: Single-instance, uses sync.RWMutex
+//   - RedisCircuitBreaker: Distributed, uses Redis with Lua scripts for atomicity
 package circuitbreaker
 
 import (
@@ -14,6 +18,25 @@ import (
 
 	"github.com/felipepmaragno/ai-gateway/internal/domain"
 )
+
+// CircuitBreaker defines the interface for circuit breaker implementations.
+// Both in-memory and distributed (Redis) implementations satisfy this interface.
+type CircuitBreaker interface {
+	// Allow checks if a request should be allowed through.
+	// Returns nil if allowed, ErrCircuitBreakerOpen if the circuit is open.
+	Allow(ctx context.Context) error
+
+	// RecordSuccess records a successful request.
+	// In half-open state, enough successes will close the circuit.
+	RecordSuccess(ctx context.Context)
+
+	// RecordFailure records a failed request.
+	// Enough failures will open the circuit.
+	RecordFailure(ctx context.Context)
+
+	// State returns the current state of the circuit breaker.
+	State(ctx context.Context) State
+}
 
 // State represents the current state of a circuit breaker.
 type State int
@@ -53,8 +76,9 @@ func DefaultConfig() Config {
 	}
 }
 
-// CircuitBreaker tracks failures and controls request flow to a service.
-type CircuitBreaker struct {
+// InMemoryCircuitBreaker tracks failures and controls request flow to a service.
+// This implementation is suitable for single-instance deployments.
+type InMemoryCircuitBreaker struct {
 	mu          sync.RWMutex
 	state       State
 	failures    int
@@ -63,14 +87,20 @@ type CircuitBreaker struct {
 	config      Config
 }
 
-func New(cfg Config) *CircuitBreaker {
-	return &CircuitBreaker{
+// NewInMemory creates a new in-memory circuit breaker.
+func NewInMemory(cfg Config) *InMemoryCircuitBreaker {
+	return &InMemoryCircuitBreaker{
 		state:  StateClosed,
 		config: cfg,
 	}
 }
 
-func (cb *CircuitBreaker) Allow() error {
+// New creates a new in-memory circuit breaker (alias for NewInMemory for backward compatibility).
+func New(cfg Config) *InMemoryCircuitBreaker {
+	return NewInMemory(cfg)
+}
+
+func (cb *InMemoryCircuitBreaker) Allow(ctx context.Context) error {
 	cb.mu.RLock()
 	state := cb.state
 	lastFailure := cb.lastFailure
@@ -97,7 +127,7 @@ func (cb *CircuitBreaker) Allow() error {
 	return nil
 }
 
-func (cb *CircuitBreaker) RecordSuccess() {
+func (cb *InMemoryCircuitBreaker) RecordSuccess(ctx context.Context) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -114,7 +144,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	}
 }
 
-func (cb *CircuitBreaker) RecordFailure() {
+func (cb *InMemoryCircuitBreaker) RecordFailure(ctx context.Context) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -132,32 +162,65 @@ func (cb *CircuitBreaker) RecordFailure() {
 	}
 }
 
-func (cb *CircuitBreaker) State() State {
+func (cb *InMemoryCircuitBreaker) State(ctx context.Context) State {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 	return cb.state
 }
 
-func (cb *CircuitBreaker) Failures() int {
+func (cb *InMemoryCircuitBreaker) Failures() int {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 	return cb.failures
 }
 
+// Manager manages circuit breakers for multiple providers.
+// It supports both in-memory and distributed (Redis) backends.
 type Manager struct {
 	mu       sync.RWMutex
-	breakers map[string]*CircuitBreaker
+	breakers map[string]CircuitBreaker
 	config   Config
+	factory  func(providerID string) CircuitBreaker
 }
 
-func NewManager(cfg Config) *Manager {
-	return &Manager{
-		breakers: make(map[string]*CircuitBreaker),
-		config:   cfg,
+// ManagerOption configures a Manager.
+type ManagerOption func(*Manager)
+
+// WithRedis configures the manager to use Redis-backed circuit breakers.
+func WithRedis(redisURL string) ManagerOption {
+	return func(m *Manager) {
+		m.factory = func(providerID string) CircuitBreaker {
+			cb, err := NewRedis(redisURL, providerID, m.config)
+			if err != nil {
+				// Fallback to in-memory if Redis fails
+				return NewInMemory(m.config)
+			}
+			return cb
+		}
 	}
 }
 
-func (m *Manager) Get(providerID string) *CircuitBreaker {
+// NewManager creates a new circuit breaker manager.
+// By default, it uses in-memory circuit breakers.
+// Use WithRedis option for distributed circuit breakers.
+func NewManager(cfg Config, opts ...ManagerOption) *Manager {
+	m := &Manager{
+		breakers: make(map[string]CircuitBreaker),
+		config:   cfg,
+		factory: func(providerID string) CircuitBreaker {
+			return NewInMemory(cfg)
+		},
+	}
+
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
+}
+
+// Get returns the circuit breaker for a provider, creating one if it doesn't exist.
+func (m *Manager) Get(providerID string) CircuitBreaker {
 	m.mu.RLock()
 	cb, ok := m.breakers[providerID]
 	m.mu.RUnlock()
@@ -173,30 +236,20 @@ func (m *Manager) Get(providerID string) *CircuitBreaker {
 		return existingCB
 	}
 
-	cb = New(m.config)
+	cb = m.factory(providerID)
 	m.breakers[providerID] = cb
 	return cb
 }
 
+// States returns the current state of all circuit breakers.
 func (m *Manager) States() map[string]string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	ctx := context.Background()
 	states := make(map[string]string)
 	for id, cb := range m.breakers {
-		states[id] = cb.State().String()
+		states[id] = cb.State(ctx).String()
 	}
 	return states
-}
-
-type RedisCircuitBreaker struct {
-	providerID string
-	config     Config
-}
-
-func NewRedisCircuitBreaker(ctx context.Context, providerID string, cfg Config) *RedisCircuitBreaker {
-	return &RedisCircuitBreaker{
-		providerID: providerID,
-		config:     cfg,
-	}
 }

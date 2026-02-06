@@ -34,6 +34,7 @@ type Config struct {
 	DefaultProvider string
 	FallbackOrder   []string
 	CBConfig        circuitbreaker.Config
+	RedisURL        string // If set, uses distributed circuit breaker
 }
 
 func New(providers map[string]Provider, defaultProvider string) *Router {
@@ -59,11 +60,19 @@ func NewWithConfig(cfg Config) *Router {
 		}
 	}
 
+	var cbOpts []circuitbreaker.ManagerOption
+	if cfg.RedisURL != "" {
+		cbOpts = append(cbOpts, circuitbreaker.WithRedis(cfg.RedisURL))
+		slog.Info("using distributed circuit breaker", "backend", "redis")
+	} else {
+		slog.Info("using in-memory circuit breaker")
+	}
+
 	return &Router{
 		providers:       cfg.Providers,
 		defaultProvider: cfg.DefaultProvider,
 		fallbackOrder:   fallbackOrder,
-		cbManager:       circuitbreaker.NewManager(cfg.CBConfig),
+		cbManager:       circuitbreaker.NewManager(cfg.CBConfig, cbOpts...),
 	}
 }
 
@@ -71,7 +80,7 @@ func (r *Router) SelectProvider(ctx context.Context, providerHint string, model 
 	if providerHint != "" {
 		if p, ok := r.providers[providerHint]; ok {
 			cb := r.cbManager.Get(providerHint)
-			if err := cb.Allow(); err != nil {
+			if err := cb.Allow(ctx); err != nil {
 				slog.Warn("circuit breaker open for requested provider", "provider", providerHint)
 				return nil, err
 			}
@@ -82,7 +91,7 @@ func (r *Router) SelectProvider(ctx context.Context, providerHint string, model 
 
 	if p := r.findProviderByModel(model); p != nil {
 		cb := r.cbManager.Get(p.ID())
-		if cb.Allow() == nil {
+		if cb.Allow(ctx) == nil {
 			return p, nil
 		}
 		slog.Warn("circuit breaker open for model provider, trying fallback", "provider", p.ID())
@@ -90,7 +99,7 @@ func (r *Router) SelectProvider(ctx context.Context, providerHint string, model 
 
 	if p, ok := r.providers[r.defaultProvider]; ok {
 		cb := r.cbManager.Get(r.defaultProvider)
-		if cb.Allow() == nil {
+		if cb.Allow(ctx) == nil {
 			return p, nil
 		}
 		slog.Warn("circuit breaker open for default provider, trying fallback", "provider", r.defaultProvider)
@@ -98,7 +107,7 @@ func (r *Router) SelectProvider(ctx context.Context, providerHint string, model 
 
 	for _, id := range r.fallbackOrder {
 		cb := r.cbManager.Get(id)
-		if cb.Allow() == nil {
+		if cb.Allow(ctx) == nil {
 			if p, ok := r.providers[id]; ok {
 				slog.Info("using fallback provider", "provider", id)
 				return p, nil
@@ -122,7 +131,7 @@ func (r *Router) SelectProviderWithFallback(ctx context.Context, providerHint st
 			continue
 		}
 		cb := r.cbManager.Get(id)
-		if cb.Allow() == nil {
+		if cb.Allow(ctx) == nil {
 			if p, ok := r.providers[id]; ok {
 				providers = append(providers, p)
 			}
@@ -137,11 +146,11 @@ func (r *Router) SelectProviderWithFallback(ctx context.Context, providerHint st
 }
 
 func (r *Router) RecordSuccess(providerID string) {
-	r.cbManager.Get(providerID).RecordSuccess()
+	r.cbManager.Get(providerID).RecordSuccess(context.Background())
 }
 
 func (r *Router) RecordFailure(providerID string) {
-	r.cbManager.Get(providerID).RecordFailure()
+	r.cbManager.Get(providerID).RecordFailure(context.Background())
 }
 
 func (r *Router) CircuitBreakerStates() map[string]string {
