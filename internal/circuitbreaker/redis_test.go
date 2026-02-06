@@ -53,9 +53,6 @@ func TestRedisCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 		cb.RecordFailure(ctx)
 	}
 
-	// Give async operations time to complete
-	time.Sleep(50 * time.Millisecond)
-
 	if cb.State(ctx) != StateOpen {
 		t.Errorf("expected StateOpen after %d failures, got %v", cfg.FailureThreshold, cb.State(ctx))
 	}
@@ -80,9 +77,6 @@ func TestRedisCircuitBreaker_BlocksWhenOpen(t *testing.T) {
 	cb.RecordFailure(ctx)
 	cb.RecordFailure(ctx)
 
-	// Give async operations time to complete
-	time.Sleep(50 * time.Millisecond)
-
 	err = cb.Allow(ctx)
 	if err != domain.ErrCircuitBreakerOpen {
 		t.Errorf("expected ErrCircuitBreakerOpen, got %v", err)
@@ -96,7 +90,7 @@ func TestRedisCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	cfg := Config{
 		FailureThreshold: 2,
 		SuccessThreshold: 1,
-		Timeout:          100 * time.Millisecond,
+		Timeout:          1 * time.Second,
 	}
 	cb, err := NewRedis(redisURL, "test-provider-4", cfg)
 	if err != nil {
@@ -108,11 +102,8 @@ func TestRedisCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	cb.RecordFailure(ctx)
 	cb.RecordFailure(ctx)
 
-	// Give async operations time to complete
-	time.Sleep(50 * time.Millisecond)
-
-	// Wait for timeout
-	time.Sleep(150 * time.Millisecond)
+	// Wait for timeout to elapse
+	time.Sleep(1100 * time.Millisecond)
 
 	err = cb.Allow(ctx)
 	if err != nil {
@@ -131,7 +122,7 @@ func TestRedisCircuitBreaker_ClosesAfterSuccessInHalfOpen(t *testing.T) {
 	cfg := Config{
 		FailureThreshold: 2,
 		SuccessThreshold: 2,
-		Timeout:          100 * time.Millisecond,
+		Timeout:          1 * time.Second,
 	}
 	cb, err := NewRedis(redisURL, "test-provider-5", cfg)
 	if err != nil {
@@ -143,14 +134,12 @@ func TestRedisCircuitBreaker_ClosesAfterSuccessInHalfOpen(t *testing.T) {
 	cb.RecordFailure(ctx)
 	cb.RecordFailure(ctx)
 
-	time.Sleep(50 * time.Millisecond)
-	time.Sleep(150 * time.Millisecond)
-	cb.Allow(ctx)
+	// Wait for timeout
+	time.Sleep(1100 * time.Millisecond)
+	cb.Allow(ctx) // Transition to half-open
 
 	cb.RecordSuccess(ctx)
 	cb.RecordSuccess(ctx)
-
-	time.Sleep(50 * time.Millisecond)
 
 	if cb.State(ctx) != StateClosed {
 		t.Errorf("expected StateClosed after successes, got %v", cb.State(ctx))
@@ -164,7 +153,7 @@ func TestRedisCircuitBreaker_ReopensOnFailureInHalfOpen(t *testing.T) {
 	cfg := Config{
 		FailureThreshold: 2,
 		SuccessThreshold: 2,
-		Timeout:          100 * time.Millisecond,
+		Timeout:          1 * time.Second,
 	}
 	cb, err := NewRedis(redisURL, "test-provider-6", cfg)
 	if err != nil {
@@ -176,13 +165,11 @@ func TestRedisCircuitBreaker_ReopensOnFailureInHalfOpen(t *testing.T) {
 	cb.RecordFailure(ctx)
 	cb.RecordFailure(ctx)
 
-	time.Sleep(50 * time.Millisecond)
-	time.Sleep(150 * time.Millisecond)
-	cb.Allow(ctx)
+	// Wait for timeout
+	time.Sleep(1100 * time.Millisecond)
+	cb.Allow(ctx) // Transition to half-open
 
 	cb.RecordFailure(ctx)
-
-	time.Sleep(50 * time.Millisecond)
 
 	if cb.State(ctx) != StateOpen {
 		t.Errorf("expected StateOpen after failure in half-open, got %v", cb.State(ctx))
@@ -196,7 +183,7 @@ func TestRedisCircuitBreaker_Reset(t *testing.T) {
 	cfg := Config{
 		FailureThreshold: 2,
 		SuccessThreshold: 1,
-		Timeout:          1 * time.Second,
+		Timeout:          30 * time.Second,
 	}
 	cb, err := NewRedis(redisURL, "test-provider-7", cfg)
 	if err != nil {
@@ -206,7 +193,6 @@ func TestRedisCircuitBreaker_Reset(t *testing.T) {
 
 	cb.RecordFailure(ctx)
 	cb.RecordFailure(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	if cb.State(ctx) != StateOpen {
 		t.Errorf("expected StateOpen, got %v", cb.State(ctx))

@@ -25,7 +25,7 @@ if state == 'open' then
     local lastFailure = tonumber(redis.call('GET', KEYS[2]) or '0')
     local now = tonumber(redis.call('TIME')[1])
     
-    if (now - lastFailure) > timeout then
+    if (now - lastFailure) >= timeout then
         redis.call('SET', KEYS[1], 'half-open')
         redis.call('SET', KEYS[3], '0')
         return 'half-open'
@@ -192,10 +192,7 @@ func (cb *RedisCircuitBreaker) RecordSuccess(ctx context.Context) {
 		cb.config.SuccessThreshold,
 	}
 
-	// Fire and forget - we don't want to block on recording success
-	go func() {
-		recordSuccessScript.Run(ctx, cb.client, keys, args...)
-	}()
+	recordSuccessScript.Run(ctx, cb.client, keys, args...)
 }
 
 // RecordFailure records a failed request.
@@ -211,10 +208,7 @@ func (cb *RedisCircuitBreaker) RecordFailure(ctx context.Context) {
 		cb.config.FailureThreshold,
 	}
 
-	// Fire and forget - we don't want to block on recording failure
-	go func() {
-		recordFailureScript.Run(ctx, cb.client, keys, args...)
-	}()
+	recordFailureScript.Run(ctx, cb.client, keys, args...)
 }
 
 // State returns the current state of the circuit breaker.
