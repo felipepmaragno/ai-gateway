@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -21,6 +23,10 @@ type Config struct {
 
 	// Horizontal scaling features
 	UseDistributedCircuitBreaker bool
+
+	// Graceful shutdown
+	ShutdownTimeout time.Duration
+	DrainTimeout    time.Duration
 }
 
 func Load() (*Config, error) {
@@ -39,6 +45,8 @@ func Load() (*Config, error) {
 		EncryptionKey:                getEnv("ENCRYPTION_KEY", ""),
 		AdminAuthEnabled:             getEnv("ADMIN_AUTH_ENABLED", "false") == "true",
 		UseDistributedCircuitBreaker: getEnv("USE_DISTRIBUTED_CB", "false") == "true",
+		ShutdownTimeout:              getDurationEnv("SHUTDOWN_TIMEOUT", 30*time.Second),
+		DrainTimeout:                 getDurationEnv("DRAIN_TIMEOUT", 15*time.Second),
 	}
 
 	return cfg, nil
@@ -47,6 +55,15 @@ func Load() (*Config, error) {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil {
+			return time.Duration(seconds) * time.Second
+		}
 	}
 	return defaultValue
 }

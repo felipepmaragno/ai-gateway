@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -207,14 +209,32 @@ func run() error {
 		slog.Info("admin API authentication disabled")
 	}
 
+	// Connection tracking for graceful shutdown
+	var activeConns sync.WaitGroup
+	var shuttingDown atomic.Bool
+
+	// Wrap handler to track active connections
+	trackedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if shuttingDown.Load() {
+			// During shutdown, reject new connections with 503
+			w.Header().Set("Connection", "close")
+			http.Error(w, "Service shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		activeConns.Add(1)
+		defer activeConns.Done()
+		mux.ServeHTTP(w, r)
+	})
+
 	srv := &http.Server{
 		Addr:         cfg.Addr,
-		Handler:      mux,
+		Handler:      trackedHandler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// Start server
 	go func() {
 		slog.Info("server listening", "addr", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -223,20 +243,45 @@ func run() error {
 		}
 	}()
 
+	// Wait for shutdown signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	slog.Info("shutting down server...")
+	slog.Info("initiating graceful shutdown...",
+		"shutdown_timeout", cfg.ShutdownTimeout,
+		"drain_timeout", cfg.DrainTimeout,
+	)
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
+	// Mark as shutting down - new requests will be rejected
+	shuttingDown.Store(true)
+
+	// Stop accepting new keep-alive connections
+	srv.SetKeepAlivesEnabled(false)
+
+	// Wait for active connections to drain
+	drainDone := make(chan struct{})
+	go func() {
+		activeConns.Wait()
+		close(drainDone)
+	}()
+
+	select {
+	case <-drainDone:
+		slog.Info("all active connections drained")
+	case <-time.After(cfg.DrainTimeout):
+		slog.Warn("drain timeout exceeded, proceeding with shutdown")
+	}
+
+	// Shutdown the server
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, cfg.ShutdownTimeout)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server forced to shutdown", "error", err)
 	}
 
-	slog.Info("server stopped")
+	slog.Info("server stopped gracefully")
 	return nil
 }
 

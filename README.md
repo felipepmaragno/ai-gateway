@@ -310,6 +310,8 @@ Available at `http://localhost:8080/metrics`:
 | `ENCRYPTION_KEY` | - | AES-256 key for API key encryption |
 | `ADMIN_AUTH_ENABLED` | `false` | Enable Basic Auth for Admin API |
 | `USE_DISTRIBUTED_CB` | `false` | Use Redis-backed distributed circuit breaker |
+| `SHUTDOWN_TIMEOUT` | `30` | Graceful shutdown timeout (seconds) |
+| `DRAIN_TIMEOUT` | `15` | Connection drain timeout (seconds) |
 
 ---
 
