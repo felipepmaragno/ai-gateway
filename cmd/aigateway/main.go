@@ -38,15 +38,25 @@ func main() {
 	}
 }
 
+const version = "0.6.0"
+
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	setupLogger(cfg.LogLevel)
+	setupLogger(cfg.LogLevel, cfg.PodName, cfg.Namespace)
 
-	slog.Info("starting AI Gateway", "addr", cfg.Addr, "version", "0.5.0")
+	// Initialize instance-aware metrics
+	metrics.InitInstanceMetrics(cfg.PodName, cfg.Namespace, version)
+
+	slog.Info("starting AI Gateway",
+		"addr", cfg.Addr,
+		"version", version,
+		"pod", cfg.PodName,
+		"namespace", cfg.Namespace,
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -299,7 +309,7 @@ func run() error {
 	return nil
 }
 
-func setupLogger(level string) {
+func setupLogger(level, podName, namespace string) {
 	var logLevel slog.Level
 	switch level {
 	case "debug":
@@ -312,8 +322,14 @@ func setupLogger(level string) {
 		logLevel = slog.LevelInfo
 	}
 
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel,
 	})
-	slog.SetDefault(slog.New(handler))
+
+	// Wrap handler to add pod and namespace to all log entries
+	logger := slog.New(baseHandler).With(
+		"pod", podName,
+		"namespace", namespace,
+	)
+	slog.SetDefault(logger)
 }

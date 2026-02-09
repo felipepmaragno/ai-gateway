@@ -128,18 +128,21 @@ func TestSetBudgetUsage(t *testing.T) {
 }
 
 func TestActiveStreams(t *testing.T) {
-	ActiveStreams.Set(0)
+	// Initialize instance metrics for testing
+	InitInstanceMetrics("test-pod", "test-ns", "0.6.0")
 
-	ActiveStreams.Inc()
-	ActiveStreams.Inc()
+	ActiveStreams.Reset()
 
-	streams := testutil.ToFloat64(ActiveStreams)
+	IncrementActiveStreams()
+	IncrementActiveStreams()
+
+	streams := testutil.ToFloat64(ActiveStreams.WithLabelValues("test-pod"))
 	if streams != 2 {
 		t.Errorf("ActiveStreams = %v, want 2", streams)
 	}
 
-	ActiveStreams.Dec()
-	streams = testutil.ToFloat64(ActiveStreams)
+	DecrementActiveStreams()
+	streams = testutil.ToFloat64(ActiveStreams.WithLabelValues("test-pod"))
 	if streams != 1 {
 		t.Errorf("ActiveStreams after dec = %v, want 1", streams)
 	}

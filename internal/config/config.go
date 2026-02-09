@@ -27,6 +27,10 @@ type Config struct {
 	// Graceful shutdown
 	ShutdownTimeout time.Duration
 	DrainTimeout    time.Duration
+
+	// Instance identification (for observability)
+	PodName   string
+	Namespace string
 }
 
 func Load() (*Config, error) {
@@ -47,9 +51,18 @@ func Load() (*Config, error) {
 		UseDistributedCircuitBreaker: getEnv("USE_DISTRIBUTED_CB", "false") == "true",
 		ShutdownTimeout:              getDurationEnv("SHUTDOWN_TIMEOUT", 30*time.Second),
 		DrainTimeout:                 getDurationEnv("DRAIN_TIMEOUT", 15*time.Second),
+		PodName:                      getEnv("POD_NAME", getHostname()),
+		Namespace:                    getEnv("POD_NAMESPACE", "default"),
 	}
 
 	return cfg, nil
+}
+
+func getHostname() string {
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return "unknown"
 }
 
 func getEnv(key, defaultValue string) string {

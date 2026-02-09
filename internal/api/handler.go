@@ -308,8 +308,8 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 	ctx, span := telemetry.StartSpan(ctx, "chat.completions.stream")
 	defer span.End()
 
-	metrics.ActiveStreams.Inc()
-	defer metrics.ActiveStreams.Dec()
+	metrics.IncrementActiveStreams()
+	defer metrics.DecrementActiveStreams()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {

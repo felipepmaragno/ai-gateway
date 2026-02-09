@@ -79,11 +79,28 @@ var (
 		[]string{"tenant_id"},
 	)
 
-	ActiveStreams = promauto.NewGauge(
+	ActiveStreams = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "aigateway_active_streams",
 			Help: "Number of active streaming connections",
 		},
+		[]string{"pod"},
+	)
+
+	ActiveConnections = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "aigateway_active_connections",
+			Help: "Number of active HTTP connections being processed",
+		},
+		[]string{"pod"},
+	)
+
+	InstanceInfo = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "aigateway_instance_info",
+			Help: "Instance information (always 1)",
+		},
+		[]string{"pod", "namespace", "version"},
 	)
 
 	BudgetUsageRatio = promauto.NewGaugeVec(
@@ -131,4 +148,34 @@ func SetCircuitBreakerState(provider string, state int) {
 
 func SetBudgetUsage(tenantID string, ratio float64) {
 	BudgetUsageRatio.WithLabelValues(tenantID).Set(ratio)
+}
+
+// Instance-aware metrics for horizontal scaling
+var currentPodName string
+
+// InitInstanceMetrics initializes instance-specific metrics.
+// Should be called once at startup with pod identification.
+func InitInstanceMetrics(podName, namespace, version string) {
+	currentPodName = podName
+	InstanceInfo.WithLabelValues(podName, namespace, version).Set(1)
+}
+
+// IncrementActiveConnections increments the active connection count for this pod.
+func IncrementActiveConnections() {
+	ActiveConnections.WithLabelValues(currentPodName).Inc()
+}
+
+// DecrementActiveConnections decrements the active connection count for this pod.
+func DecrementActiveConnections() {
+	ActiveConnections.WithLabelValues(currentPodName).Dec()
+}
+
+// IncrementActiveStreams increments the active stream count for this pod.
+func IncrementActiveStreams() {
+	ActiveStreams.WithLabelValues(currentPodName).Inc()
+}
+
+// DecrementActiveStreams decrements the active stream count for this pod.
+func DecrementActiveStreams() {
+	ActiveStreams.WithLabelValues(currentPodName).Dec()
 }
